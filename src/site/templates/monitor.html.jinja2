@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Monitor</title>
+<link rel="stylesheet" href="monitor.css">
+</head>
+<body>
+<header>
+  <h1>Agent Monitor</h1>
+  <span id="status-pill" class="pill pill-unknown">—</span>
+  <button id="refresh-btn">↻ Refresh</button>
+  <span id="last-updated"></span>
+  <a href="roadmap/" style="margin-left:auto;color:var(--text-muted);text-decoration:none;font-size:13px;border:1px solid var(--text-dim);padding:2px 10px;">Roadmap</a>
+  <a href="backlog/" style="color:var(--text-muted);text-decoration:none;font-size:13px;border:1px solid var(--text-dim);padding:2px 10px;">Backlog</a>
+</header>
+
+{{ launchpad_html }}
+
+<main>
+  <div class="card">
+    <div class="card-header">Supervisor</div>
+    <div class="card-body">
+      <div class="hb-grid" id="hb-grid"></div>
+      <div class="hb-note" id="hb-note"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="dot" id="active-dot"></span><span id="active-header">Active Task</span></div>
+    <div class="card-body" id="active-body"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Task Stacks</div>
+    <div class="card-body"><div class="stack-grid" id="stack-grid"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">System Snapshot</div>
+    <div class="card-body"><div class="system-grid" id="system-grid"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">GPU Snapshot</div>
+    <div class="card-body">
+      <div class="gpu-layout" id="gpu-body"></div>
+      <div class="section-note" id="gpu-note"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Visibility + Permissions</div>
+    <div class="card-body"><ul class="visibility-list" id="visibility-list"></ul></div>
+  </div>
+</main>
+
+<script src="monitor.js"></script>
+</body>
+</html>

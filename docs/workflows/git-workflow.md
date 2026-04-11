@@ -1,0 +1,35 @@
+## Git workflow guardrails
+- The workspace root (the repo directory) is the coordination repo, and task completion must be checkpointed there.
+- Local git commands are allowed when required by the task and this contract.
+- On completion of every task, create a root-repo git commit that includes the task's updated coordination artifacts (at minimum report/state changes and any other files intentionally modified for that task).
+- Use one commit per completed task. Keep commit scope task-specific; do not batch unrelated work.
+- When dispatched to a parallel worktree (environment variables `REPO_ROOT` and `WORKER_BRANCH` are set), merge the worker branch into the main repo before writing the dispatch outcome file. Resolve any merge conflicts. The specific merge command is in the session prompt.
+- **Root agent source code and configuration are off-limits.** Do not create, modify, or delete files in `src/`, `scripts/`, `mcp/`, `docs/`, `.codex/`, or `.claude/`, and do not modify root-level files (`CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, or any other root-level non-directory file). The only exceptions are creating new files in `docs/dev/issues/` and `docs/dev/plans/`. This restriction is enforced by a git pre-commit hook (`AGENT_WORKER=1`); commits touching banned paths will be rejected. If a user asks you to change the agent system, root infrastructure, or improve yourself: document the request as a new issue in `docs/dev/issues/` or a new plan in `docs/dev/plans/`, explain in your reply that the developer review phase will implement it, and set outcome status to `done`. Never attempt the implementation yourself.
+- Do not edit existing `docs/dev/` files (CHANGELOG, ROADMAP, or files created by others). You may only *create new* files in `docs/dev/issues/` and `docs/dev/plans/`.
+- If a task produces no file changes, do not create an empty commit; note "no file changes" in the task report.
+- Root coordination work is local-first: a root remote is optional, and root-only tasks are completed via local commits plus Slack/report checkpoints unless a human explicitly requests remote publishing.
+- If a human explicitly requests root-repo GitHub delivery, publish on a non-default branch and keep a PR current for review.
+- For project/MCP repositories (or any repo where a remote workflow is in use), delivery must be pull-request based: publish local commits on a non-default branch, open/update a PR, and keep that PR current for review.
+- **Upstream PR targeting for forked projects:** When a project repository is a fork (i.e., `origin` is the personal fork and `upstream` is the canonical repository), default the PR base to the upstream repository's default branch, not the fork. Before opening a PR, confirm: (1) the upstream remote exists, (2) the PR base repo is upstream, and (3) the PR base branch is the upstream default branch. For branch publishing: if you have push permission to the upstream branch namespace, push the branch to upstream and open an upstream-to-upstream PR; otherwise, push to the fork (`origin`) and open a fork-to-upstream PR.
+- Never push directly to a default/protected branch (for example, `main`/`master`) without an explicit human instruction in-task.
+- Every agent-opened PR must include `@codex` in an immediate PR comment so automated review is requested. Simply put `@codex` in the PR comment. If `@codex` automated review is unavailable on an upstream-target PR (e.g., the bot is not installed on the upstream repo), do not block delivery — note the caveat in the task report/Slack summary and continue.
+- GitHub is a human-facing delivery/reporting interface in addition to Slack when remotes are used; keep the related GitHub artifact current (PR/issue/branch summary).
+- Use `gh` for all GitHub repository/remote management operations (repo create/view, auth checks, default-branch checks, and related GitHub workflows).
+- For any GitHub git operation (clone/fetch/pull/push/submodule add/remote set-url), use SSH remotes only (`git@github.com:org/repo.git`), not HTTPS URLs.
+- Whenever a change requires human review (root coordination files or `mcp/` changes), post a Slack thread update requesting feedback.
+- Status while waiting on that review follows the status rules above: use `waiting_human` if no executable work remains; use `in_progress` only if there is active actionable work (for example, additional requested PR follow-ups already queued).
+- If root-level tracked files are changed (including `scripts/`, `prompts/`, `config/`, or other root coordination files), the agent MUST:
+  - commit those root changes in the root repo, and
+  - trigger human review (see rule above).
+- When creating a new GitHub repository for remotes/submodules, default to `public` visibility. Use `private` only if a human explicitly requests it.
+- Project and MCP repositories MUST be represented in the root repo as git submodules (gitlinks + `.gitmodules`) when they are part of active work.
+- Enforce one repository layer per project: each `projects/<project_slug>/` path is a single repo/submodule boundary with no nested git repos or submodules inside it.
+- MCP codebases must live in sub git repositories under `mcp/` (for example, `mcp/<repo>/`).
+- Root git should track only submodule pointers for `projects/` and `mcp/`, not file contents inside those repos.
+- If any files under `projects/` are changed during a session, the agent MUST maintain project-level git before exit:
+  - create a project-repo commit for that session's changes (task-scoped; use a `WIP:` prefix if task is not finished),
+  - update the root repo's submodule pointer for each affected `projects/<slug>` path,
+  - record project commit hash(es) in `reports/<thread_ts>.md`.
+- If any files under `mcp/` are changed during a session, the agent MUST:
+  - trigger human review (see rule above), and
+  - record MCP commit hash(es) in `reports/<thread_ts>.md`.

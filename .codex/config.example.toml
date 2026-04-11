@@ -1,0 +1,48 @@
+# Codex worker configuration for Murphy Agent.
+# Copy to .codex/config.toml and fill in your literal token values.
+
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+personality = "pragmatic"
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+web_search = "live"
+
+[sandbox_workspace_write]
+network_access = true
+
+# Optional consult server. Leave command empty to disable it, or point it at
+# your own MCP server after bootstrap.
+[mcp_servers.consult]
+command = ""
+args = []
+tool_timeout_sec = 7200
+
+[mcp_servers.consult.env]
+CHATGPT_DEFAULT_PROJECT = "Murphy"
+
+[mcp_servers.slack]
+command = "__SLACK_MCP_COMMAND__"
+args = ["--transport", "stdio"]
+tool_timeout_sec = 180
+
+enabled_tools = [
+  "conversations_search_messages",
+  "conversations_replies",
+  "conversations_add_message",
+  "reactions_add",
+  "reactions_remove",
+  "attachment_get_data",
+  "attachment_upload"
+]
+
+[mcp_servers.slack.env]
+SLACK_MCP_XOXP_TOKEN = "xoxp-paste-your-token-here"
+SLACK_MCP_ADD_MESSAGE_TOOL = "true"
+SLACK_MCP_ADD_MESSAGE_MARK = "true"
+SLACK_MCP_ENABLED_TOOLS = "conversations_search_messages,conversations_replies,conversations_add_message,reactions_add,reactions_remove,attachment_get_data,attachment_upload"
+
+[features]
+multi_agent = true
+prevent_idle_sleep = true

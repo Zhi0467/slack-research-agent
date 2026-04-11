@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Extract and optionally promote durable memory candidates from a report."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import re
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Sequence
+
+
+@dataclass
+class Candidate:
+    line_no: int
+    kind: str
+    note: str
+
+
+def timestamp_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Find durable-memory candidates in a report file and optionally append "
+            "selected entries into `.agent/memory/memory.md`."
+        )
+    )
+    parser.add_argument("--report", required=True, help="Path to report markdown file.")
+    parser.add_argument(
+        "--apply",
+        default="",
+        help="Apply selected candidates to memory (e.g., `1,3` or `all`).",
+    )
+    parser.add_argument(
+        "--memory-file",
+        default=".agent/memory/memory.md",
+        help="Target memory file path (default: .agent/memory/memory.md).",
+    )
+    return parser.parse_args()
+
+
+def infer_kind(text: str) -> str:
+    lowered = text.lower()
+    if any(k in lowered for k in ("must", "never", "do not", "required", "only ", "limit", "avoid")):
+        return "constraint"
+    if any(k in lowered for k in ("prefer", "recommended", "recommend", "best practice")):
+        return "preference"
+    return "environment"
+
+
+def normalize_note(text: str) -> str:
+    note = text.strip()
+    note = re.sub(r"^\[[^\]]+\]\s*", "", note)
+    note = re.sub(r"^\-\s*", "", note)
+    note = re.sub(r"\s+", " ", note)
+    return note
+
+
+def extract_candidates(report_text: str) -> List[Candidate]:
+    keyword_patterns = (
+        r"\bmust\b",
+        r"\bnever\b",
+        r"\bdo not\b",
+        r"\brequired\b",
+        r"\bprefer\b",
+        r"\brecommended\b",
+        r"\bincident\b",
+        r"\blimit\b",
+        r"\bavoid\b",
+        r"\balways\b",
+    )
+    out: List[Candidate] = []
+    seen = set()
+
+    for idx, raw in enumerate(report_text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped.startswith("- "):
+            continue
+        lower = stripped.lower()
+        if not any(re.search(pattern, lower) for pattern in keyword_patterns):
+            continue
+
+        note = normalize_note(stripped[2:])
+        if len(note) < 25:
+            continue
+        if note.lower() in seen:
+            continue
+        seen.add(note.lower())
+        out.append(Candidate(line_no=idx, kind=infer_kind(note), note=note))
+
+    return out
+
+
+def ensure_memory_header(memory_text: str) -> str:
+    if "Entries:" in memory_text:
+        return memory_text.rstrip() + "\n"
+    base = memory_text.rstrip()
+    if base:
+        return base + "\n\nEntries:\n"
+    return "# Agent Memory\n\nEntries:\n"
+
+
+def parse_apply_selection(selection: str, max_index: int) -> List[int]:
+    s = selection.strip().lower()
+    if not s:
+        return []
+    if s == "all":
+        return list(range(1, max_index + 1))
+
+    selected: List[int] = []
+    for part in s.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if not re.match(r"^\d+$", token):
+            raise ValueError(f"Invalid selection token: {token}")
+        value = int(token)
+        if value < 1 or value > max_index:
+            raise ValueError(f"Selection out of range: {value}")
+        if value not in selected:
+            selected.append(value)
+    return selected
+
+
+def append_candidates(
+    memory_path: Path,
+    report_path: Path,
+    candidates: Sequence[Candidate],
+    selected_indexes: Sequence[int],
+) -> int:
+    lock_path = memory_path.parent / ".worker.lock"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    # Try non-blocking first to detect contention
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("memory: waiting for another worker to finish writing...", file=sys.stderr)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)  # blocking wait
+    try:
+        existing = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
+        prepared = ensure_memory_header(existing)
+        existing_notes = set(re.findall(r"\| Note: (.*?) \| Source:", existing))
+
+        added = 0
+        lines_to_add: List[str] = []
+        source_label = str(report_path)
+        now = timestamp_utc()
+        for index in selected_indexes:
+            candidate = candidates[index - 1]
+            if candidate.note in existing_notes:
+                continue
+            lines_to_add.append(
+                f"- [{now}] Type: {candidate.kind} | Note: {candidate.note} | Source: {source_label}"
+            )
+            added += 1
+
+        if added == 0:
+            return 0
+
+        merged = prepared.rstrip() + "\n" + "\n".join(lines_to_add) + "\n"
+        memory_path.write_text(merged, encoding="utf-8")
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+    return added
+
+
+def main() -> int:
+    args = parse_args()
+    report_path = Path(args.report)
+    memory_path = Path(args.memory_file)
+
+    if not report_path.exists():
+        print(f"error: report not found: {report_path}", file=sys.stderr)
+        return 1
+
+    report_text = report_path.read_text(encoding="utf-8")
+    candidates = extract_candidates(report_text)
+
+    print(f"Report: {report_path}")
+    print(f"Memory file: {memory_path}")
+    if not candidates:
+        print("No durable-memory candidates found.")
+        return 0
+
+    print("Candidates:")
+    for idx, candidate in enumerate(candidates, start=1):
+        print(f"{idx}. [{candidate.kind}] line {candidate.line_no}")
+        print(f"   {candidate.note}")
+
+    if not args.apply.strip():
+        print("Apply: none (use --apply all or --apply 1,2 to append selected entries)")
+        return 0
+
+    try:
+        selected = parse_apply_selection(args.apply, len(candidates))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if not selected:
+        print("No entries selected.")
+        return 0
+
+    added = append_candidates(memory_path, report_path, candidates, selected)
+    print(f"Applied: {len(selected)} selected, {added} new entries added.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

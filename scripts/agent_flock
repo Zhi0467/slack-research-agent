@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Locked file operations for shared .agent/ files.
+
+Workers call this instead of raw shell redirection to coordinate
+concurrent writes.  Uses fcntl advisory locking (same mechanism as
+state.json and memory_reflect).
+
+Usage:
+    python3 scripts/agent_flock append <file> <text>
+    echo "text" | python3 scripts/agent_flock append <file>   # text from stdin
+    python3 scripts/agent_flock write  <file>                 # full replace from stdin
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    import fcntl  # type: ignore
+except ImportError:  # pragma: no cover
+    fcntl = None
+
+
+def _lock_and_run(target: Path, fn):
+    """Acquire advisory lock on *target*, run *fn*, release."""
+    lock_path = target.parent / (target.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lockf:
+        if fcntl is not None:
+            try:
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                print(
+                    f"agent_flock: waiting for lock on {target.name} ...",
+                    file=sys.stderr,
+                )
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            fn()
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
+def cmd_append(target: Path, text: str) -> int:
+    """Append *text* to *target* under lock.  Ensures trailing newline."""
+    def do_append():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+
+    _lock_and_run(target, do_append)
+    return 0
+
+
+def cmd_write(target: Path) -> int:
+    """Replace *target* with stdin content under lock (tempfile + os.replace)."""
+    content = sys.stdin.read()
+
+    def do_write():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=target.name + ".", dir=str(target.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_name, target)
+        except BaseException:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
+            raise
+
+    _lock_and_run(target, do_write)
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) < 3:
+        print("Usage: agent_flock append <file> <text>", file=sys.stderr)
+        print("       echo 'text' | agent_flock append <file>", file=sys.stderr)
+        print("       agent_flock write  <file>  (reads stdin)", file=sys.stderr)
+        return 2
+
+    cmd = sys.argv[1]
+    target = Path(sys.argv[2])
+
+    if cmd == "append":
+        # Text from argv if provided, otherwise from stdin
+        if len(sys.argv) >= 4:
+            text = sys.argv[3]
+        elif not sys.stdin.isatty():
+            text = sys.stdin.read()
+        else:
+            print("error: append requires <text> argument or stdin", file=sys.stderr)
+            return 2
+        return cmd_append(target, text)
+    elif cmd == "write":
+        return cmd_write(target)
+    else:
+        print(f"error: unknown command: {cmd}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

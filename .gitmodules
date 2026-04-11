@@ -1,0 +1,3 @@
+[submodule "mcp/slack-mcp-server"]
+	path = mcp/slack-mcp-server
+	url = git@github.com:murphytheagent/slack-mcp-server.git

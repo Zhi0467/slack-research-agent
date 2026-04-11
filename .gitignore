@@ -1,0 +1,40 @@
+# Runtime state
+.agent/*
+!.agent/skills/
+!.agent/skills/**
+
+# Environment and credentials
+.env
+.codex/config.toml
+src/config/claude_mcp.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# MCP server builds
+mcp/*/build/
+
+# Virtual environments
+.venv*/
+venv/
+
+# Runtime output
+deliverables/
+reports/
+projects/
+dashboard-export/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+tmp/

@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Staging helper for parallel-dispatch worktrees.
+
+In parallel worktrees, .agent/ and projects/*/ are symlinks to the main
+repo.  This breaks ``git add`` for tracked files under those paths:
+
+  - ``git add .agent/foo`` → "beyond a symbolic link"
+  - ``git add /abs/path/.agent/foo`` → "outside repository"
+  - ``git add projects/slug.md`` may silently not stage when a sibling
+    symlink confuses git's internal path resolution.
+
+This script always uses ``git hash-object -w`` + ``git update-index
+--cacheinfo`` to stage files, bypassing git's path resolution entirely.
+For submodule gitlink entries (directories with .git inside) it stages
+with mode 160000.
+
+Usage:
+    python3 scripts/worktree_stage <path> [<path> ...]
+
+IMPORTANT: Must be run from the worktree root directory, not from
+inside a subdirectory.  Invocation from symlinked directories (like
+.agent/) or submodule directories is detected and rejected — these
+resolve to the main repo, causing staging to target the wrong index.
+
+Exit codes: 0 = all paths staged, 1 = at least one path failed, 2 = usage error.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git"] + args,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _check_symlinked_cwd(toplevel: Path) -> None:
+    """Reject invocation from a symlinked CWD that resolves to a different repo.
+
+    Walks up the shell's logical CWD (``$PWD``) to find the nearest
+    ``.git`` marker, then verifies it matches the git-detected
+    ``--show-toplevel``.  If they differ, the CWD went through a
+    symlink into a different repository.
+
+    If ``$PWD`` is unavailable (non-shell context) or resolves
+    symlinks (shell has ``set -P`` / ``CHASE_LINKS``), the check is
+    skipped — the detection is best-effort.  Once symlinks are
+    resolved, both ``os.getcwd()`` and ``--show-toplevel`` point to
+    the same repo, so there is no way to distinguish "legitimate
+    subdirectory" from "symlinked into wrong repo" without the
+    unresolved logical path.
+    """
+    shell_cwd = os.environ.get("PWD")
+    if not shell_cwd:
+        return
+
+    # Validate that $PWD is consistent with the actual CWD.  A stale
+    # $PWD (inherited from a parent process that used subprocess.run
+    # with cwd=) would cause false rejections.
+    if Path(shell_cwd).resolve() != Path.cwd().resolve():
+        return  # $PWD is stale — not reliable for detection
+
+    candidate = Path(shell_cwd)
+    while True:
+        if (candidate / ".git").exists():
+            logical_root = candidate.resolve()
+            detected_root = toplevel.resolve()
+            if logical_root != detected_root:
+                print(
+                    "error: worktree_stage must be run from the worktree root, "
+                    "not from inside a symlinked directory.\n"
+                    f"  Shell CWD:      {shell_cwd}\n"
+                    f"  Logical root:   {logical_root}\n"
+                    f"  Detected root:  {detected_root}\n"
+                    "  cd back to the worktree root first, then retry.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            return  # Roots match — CWD is fine
+        parent = candidate.parent
+        if parent == candidate:
+            break  # Reached filesystem root
+        candidate = parent
+    # No .git found walking up $PWD — $PWD may be stale or bogus.
+    # Skip silently; the detection is best-effort.
+
+
+def _get_repo_root() -> Path:
+    """Return the worktree/repo root for the current working directory.
+
+    Detects and rejects invocation from inside a submodule (where
+    ``--show-toplevel`` returns the submodule root instead of the
+    worktree root, breaking all subsequent index operations).
+
+    Also detects invocation from inside a symlinked directory (like
+    ``.agent/`` in a worktree) where the resolved CWD lands in a
+    different repository than the logical CWD.
+    """
+    result = _git(["rev-parse", "--show-toplevel"], cwd=Path.cwd())
+    if result.returncode != 0:
+        print(
+            f"fatal: not inside a git repository: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Detect submodule: --show-superproject-working-tree is non-empty
+    # only when CWD is inside a submodule.  In a worktree with symlinked
+    # project dirs, CWD resolves through the symlink into the main repo's
+    # submodule, making --show-toplevel return the wrong root.
+    sp = _git(["rev-parse", "--show-superproject-working-tree"], cwd=Path.cwd())
+    if sp.returncode == 0 and sp.stdout.strip():
+        print(
+            "error: worktree_stage must be run from the worktree root, "
+            "not from inside a submodule directory.\n"
+            "  cd back to the worktree root first, then retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    toplevel = Path(result.stdout.strip())
+
+    # Detect symlinked CWD: $PWD preserves the logical path (with
+    # symlinks), while os.getcwd()/Path.cwd() resolve them.  Walk up
+    # $PWD to find the nearest .git marker and verify it matches.
+    _check_symlinked_cwd(toplevel)
+
+    return toplevel
+
+
+def _resolve_to_repo_relative(repo_root: Path, raw_path: str) -> str | None:
+    """Convert raw_path to a repo-relative string, or None on failure.
+
+    Handles three cases:
+    1. Already relative — normalise and return.
+    2. Absolute and under the worktree root — simple relpath.
+    3. Absolute and under a symlink target — map back through the
+       worktree's top-level symlinks (e.g. /main-repo/.agent/x → .agent/x).
+    """
+    p = Path(raw_path)
+
+    # Case 1: relative path
+    if not p.is_absolute():
+        return os.path.normpath(raw_path)
+
+    resolved_root = repo_root.resolve()
+
+    # Case 2: absolute, under worktree root
+    try:
+        return str(p.relative_to(resolved_root))
+    except ValueError:
+        pass
+
+    # Case 3: absolute path through a symlink target.
+    # Scan symlinks in the worktree (top-level and under shared dirs
+    # like projects/) whose resolved target is an ancestor of the path.
+    abs_resolved = p.resolve()
+    symlink_entries: list[Path] = []
+
+    # Top-level symlinks (e.g. .agent/)
+    for entry in repo_root.iterdir():
+        if entry.is_symlink():
+            symlink_entries.append(entry)
+
+    # Nested symlinks under known shared directories (e.g. projects/*/)
+    for shared_dir_name in ("projects",):
+        shared_dir = repo_root / shared_dir_name
+        if shared_dir.is_dir() and not shared_dir.is_symlink():
+            for entry in shared_dir.iterdir():
+                if entry.is_symlink():
+                    symlink_entries.append(entry)
+
+    for entry in symlink_entries:
+        target = entry.resolve()
+        try:
+            suffix = abs_resolved.relative_to(target)
+            rel = entry.relative_to(repo_root)
+            return str(rel / suffix)
+        except ValueError:
+            continue
+
+    return None
+
+
+def _detect_file_mode(real_path: Path) -> str:
+    """Return git file mode: 100755 for executable, 100644 otherwise."""
+    if os.access(str(real_path), os.X_OK):
+        return "100755"
+    return "100644"
+
+
+def stage_file(repo_root: Path, rel_path: str) -> str | None:
+    """Stage a regular file via hash-object + update-index.
+
+    Returns an error message on failure, None on success.
+    Caller must verify the file exists before calling this.
+    """
+    full_path = (repo_root / rel_path).resolve()
+
+    # Write blob
+    result = _git(["hash-object", "-w", str(full_path)], cwd=repo_root)
+    if result.returncode != 0:
+        return f"hash-object failed for {rel_path}: {result.stderr.strip()}"
+    blob_sha = result.stdout.strip()
+
+    # Detect mode
+    mode = _detect_file_mode(full_path)
+
+    # Update index
+    result = _git(
+        ["update-index", "--add", "--cacheinfo", f"{mode},{blob_sha},{rel_path}"],
+        cwd=repo_root,
+    )
+    if result.returncode != 0:
+        return f"update-index failed for {rel_path}: {result.stderr.strip()}"
+
+    return None
+
+
+def stage_submodule(repo_root: Path, rel_path: str) -> str | None:
+    """Stage a submodule gitlink (mode 160000) via update-index.
+
+    Returns an error message on failure, None on success.
+    """
+    sub_dir = (repo_root / rel_path).resolve()
+    if not sub_dir.is_dir():
+        return f"submodule directory not found: {rel_path}"
+
+    # Get the submodule's HEAD commit
+    result = _git(["rev-parse", "HEAD"], cwd=sub_dir)
+    if result.returncode != 0:
+        return f"rev-parse HEAD failed for {rel_path}: {result.stderr.strip()}"
+    commit_sha = result.stdout.strip()
+
+    # Update index with gitlink mode
+    result = _git(
+        ["update-index", "--add", "--cacheinfo", f"160000,{commit_sha},{rel_path}"],
+        cwd=repo_root,
+    )
+    if result.returncode != 0:
+        return f"update-index failed for {rel_path}: {result.stderr.strip()}"
+
+    return None
+
+
+def _is_tracked(repo_root: Path, rel_path: str) -> bool:
+    """Check if a path is tracked in the index."""
+    result = _git(["ls-files", "--error-unmatch", rel_path], cwd=repo_root)
+    return result.returncode == 0
+
+
+def stage_deletion(repo_root: Path, rel_path: str) -> str | None:
+    """Stage the deletion of a tracked file via update-index --force-remove.
+
+    Uses --force-remove to bypass git's symlink path validation.
+    Returns an error message on failure, None on success.
+    """
+    result = _git(["update-index", "--force-remove", rel_path], cwd=repo_root)
+    if result.returncode != 0:
+        return f"update-index --force-remove failed for {rel_path}: {result.stderr.strip()}"
+    return None
+
+
+def stage_path(repo_root: Path, raw_path: str) -> str | None:
+    """Stage a single path.  Returns error message on failure, None on success."""
+    rel_path = _resolve_to_repo_relative(repo_root, raw_path)
+    if rel_path is None:
+        return f"path is outside the repository: {raw_path}"
+
+    # In worktrees, .agent/ is symlinked to the main repo — changes are
+    # already visible on main's working tree.  Committing .agent/ files on
+    # the worker branch creates snapshots that conflict during merge.
+    if rel_path.startswith(".agent/") or rel_path == ".agent":
+        if os.environ.get("WORKER_BRANCH"):
+            print(f"skip: {rel_path} (symlinked runtime state — not staged in worktrees)", file=sys.stderr)
+            return None  # silently succeed — the file is already on main via symlink
+
+    full = repo_root / rel_path
+    resolved = full.resolve()
+
+    # Submodule directory: has a .git inside (file or dir)
+    if resolved.is_dir():
+        git_marker = resolved / ".git"
+        if git_marker.exists():
+            return stage_submodule(repo_root, rel_path)
+        return f"directory is not a submodule (no .git): {rel_path}"
+
+    # File exists: stage it
+    if resolved.is_file():
+        return stage_file(repo_root, rel_path)
+
+    # File doesn't exist: if it's tracked, stage as deletion
+    if _is_tracked(repo_root, rel_path):
+        return stage_deletion(repo_root, rel_path)
+
+    return f"file not found and not tracked: {rel_path}"
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("Usage: worktree_stage <path> [<path> ...]", file=sys.stderr)
+        return 2
+
+    repo_root = _get_repo_root()
+    errors: list[str] = []
+
+    for raw_path in sys.argv[1:]:
+        err = stage_path(repo_root, raw_path)
+        if err:
+            print(f"error: {err}", file=sys.stderr)
+            errors.append(err)
+
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

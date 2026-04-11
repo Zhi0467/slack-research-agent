@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "slack": {
+      "command": "__SLACK_MCP_COMMAND__",
+      "args": ["--transport", "stdio"],
+      "env": {
+        "SLACK_MCP_XOXP_TOKEN": "<your-slack-xoxp-token>",
+        "SLACK_MCP_ADD_MESSAGE_TOOL": "true",
+        "SLACK_MCP_ADD_MESSAGE_MARK": "true",
+        "SLACK_MCP_ENABLED_TOOLS": "conversations_replies,conversations_add_message,reactions_add,reactions_remove,attachment_get_data,attachment_upload"
+      }
+    }
+  }
+}

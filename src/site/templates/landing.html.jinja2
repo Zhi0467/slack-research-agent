@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Murphy | Autonomous Research Agent</title>
+<link rel="icon" href="data:,">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@1,700&display=swap');
+  :root {
+    --bg-base: #000; --bg-border: rgba(56,240,255,0.5); --bg-border-strong: rgba(56,240,255,0.8);
+    --text-main: #eaffff; --text-muted: #99a6d8; --text-dim: #6d79ad;
+    --brand: #38f0ff; --brand-alt: #ff2fb3;
+    --good: #4dffb4; --warn: #ffe66a; --bad: #ff6689;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Rajdhani", "Avenir Next", "Segoe UI", sans-serif;
+    background: #000;
+    color: var(--text-main); font-size: 15px;
+    min-height: 100vh; position: relative; overflow-x: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; background: #000;
+    border-bottom: 3px solid #38f0ff;
+    flex-wrap: wrap; position: sticky; top: 0; z-index: 2;
+  }
+  header h1 {
+    font-family: "Orbitron", "Rajdhani", sans-serif;
+    font-size: 18px; font-weight: 700; letter-spacing: 0.15em;
+    color: #e9ffff;
+    text-shadow: 3px 0 #ff2fb3, -3px 0 #38f0ff;
+  }
+  .nav-links { display: flex; gap: 8px; margin-left: auto; }
+  .nav-link {
+    display: inline-block; padding: 5px 14px;
+    border: 2px solid var(--bg-border);
+    background: rgba(56,240,255,0.06);
+    color: var(--text-muted);
+    font-family: "Orbitron", "Rajdhani", sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; text-decoration: none;
+    transition: border-color 150ms, color 150ms, box-shadow 150ms;
+  }
+  .nav-link:hover, .nav-link.active {
+    border-color: var(--bg-border-strong); color: var(--text-main);
+    box-shadow: 4px 4px 0 rgba(255,47,179,0.3), -2px -2px 0 rgba(56,240,255,0.2);
+  }
+  .nav-link.active { background: rgba(56,240,255,0.12); }
+  main {
+    padding: 16px 20px 24px; display: grid; gap: 10px;
+    max-width: 1450px; margin: 0 auto; position: relative; z-index: 1;
+  }
+  .card {
+    background: #000; border: 2px solid var(--bg-border); border-radius: 0;
+    overflow: hidden;
+    box-shadow: 4px 4px 0 rgba(255,47,179,0.3), -2px -2px 0 rgba(56,240,255,0.2);
+  }
+  .card:hover {
+    box-shadow: 6px 6px 0 rgba(255,47,179,0.5), -3px -3px 0 rgba(56,240,255,0.3);
+    border-color: var(--bg-border-strong);
+  }
+  .card-header {
+    padding: 10px 16px;
+    background: rgba(56,240,255,0.06);
+    border-bottom: 2px solid rgba(56,240,255,0.3);
+    font-family: "Orbitron", "Rajdhani", sans-serif;
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.12em; color: #b8f4ff;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-body { padding: 14px 16px; }
+  .pill {
+    display: inline-block; padding: 3px 10px; border-radius: 0;
+    border: 2px solid transparent;
+    font-family: "Orbitron", "Rajdhani", sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; text-shadow: 0 0 6px rgba(255,255,255,0.24);
+  }
+  .pill-online  { background: rgba(26,76,63,0.4); border-color: rgba(77,255,180,0.5); color: var(--good); }
+  .pill-offline { background: rgba(95,26,46,0.44); border-color: rgba(255,102,137,0.56); color: var(--bad); }
+  .hero-banner {
+    font-family: "Orbitron", "Rajdhani", sans-serif;
+    font-size: clamp(36px, 6vw, 72px);
+    font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; text-align: center;
+    padding: 40px 20px 16px;
+    color: #e9ffff;
+    text-shadow: 3px 0 #ff2fb3, -3px 0 #38f0ff;
+    border-bottom: 2px solid rgba(56,240,255,0.3);
+    background: rgba(56,240,255,0.03);
+  }
+  .hero-sub {
+    text-align: center; padding: 16px 20px 20px;
+    color: var(--text-muted); font-size: 16px; line-height: 1.6;
+    max-width: 700px; margin: 0 auto;
+  }
+  .hb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 4px;
+  }
+  .hb-item {
+    display: flex; flex-direction: column; gap: 2px;
+    background: #000; border: 1px solid rgba(56,240,255,0.3);
+    border-radius: 0; padding: 6px 10px;
+  }
+  .hb-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .hb-val { font-size: 14px; color: var(--text-main); font-weight: 700; }
+  .gpu-wrap { margin-top: 10px; }
+  .gpu-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .gpu-track { height: 8px; background: rgba(56,240,255,0.1); border: 1px solid rgba(56,240,255,0.2); border-radius: 0; }
+  .gpu-fill { height: 100%; background: linear-gradient(90deg, var(--brand) 0%, var(--brand-alt) 100%); }
+  .gpu-mem { margin-top: 4px; font-size: 12px; color: var(--text-dim); }
+  .arch-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .arch-item { border: 1px solid rgba(56,240,255,0.3); background: #000; padding: 12px 14px; display: grid; gap: 4px; }
+  .arch-role { font-size: 9px; color: var(--brand); text-transform: uppercase; letter-spacing: 0.1em; font-family: "Orbitron", "Rajdhani", sans-serif; font-weight: 700; }
+  .arch-name { font-size: 18px; font-weight: 700; color: var(--text-main); }
+  .arch-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  .showcase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px; }
+  .showcase-item {
+    display: block; text-decoration: none; color: var(--text-main);
+    border: 1px solid rgba(56,240,255,0.3); background: #000; padding: 12px 14px;
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .showcase-item:hover {
+    border-color: var(--bg-border-strong);
+    box-shadow: 4px 4px 0 rgba(255,47,179,0.3), -2px -2px 0 rgba(56,240,255,0.2);
+  }
+  .showcase-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; }
+  .showcase-title { font-family: "Orbitron", "Rajdhani", sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px; }
+  .showcase-desc { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  .ts-footer { margin-top: 10px; font-size: 11px; color: var(--text-dim); font-family: "JetBrains Mono", monospace; }
+  .site-footer { padding: 16px 20px; text-align: center; color: var(--text-dim); font-size: 12px; border-top: 1px solid rgba(56,240,255,0.2); }
+  .site-footer a { color: var(--brand); text-decoration: none; }
+  @media (max-width: 768px) { .arch-grid { grid-template-columns: 1fr; } .nav-links { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Murphy</h1>
+  <div class="nav-links">
+    <a class="nav-link active" href="./">Home</a>
+    <a class="nav-link" href="./showcase/">Showcase</a>
+    <a class="nav-link" href="https://dashboard.murphytheagent.com">Dashboard</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <div class="hero-banner">Murphy</div>
+    <div class="hero-sub">Autonomous research agent. Receives tasks via Slack, conducts research, writes code, consults external experts, and delivers results &mdash; 24/7, with parallel workers and adversarial review.</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Supervisor <span class="pill pill-online" id="s-pill">Online</span></div>
+    <div class="card-body">
+      <div class="hb-grid">
+        <div class="hb-item"><span class="hb-label">Status</span><span class="hb-val" id="s-status">--</span></div>
+        <div class="hb-item"><span class="hb-label">Loop</span><span class="hb-val" id="s-loops">--</span></div>
+        <div class="hb-item"><span class="hb-label">Workers</span><span class="hb-val" id="s-workers">--</span></div>
+        <div class="hb-item"><span class="hb-label">Active</span><span class="hb-val" id="s-active">--</span></div>
+        <div class="hb-item"><span class="hb-label">Queued</span><span class="hb-val" id="s-queued">--</span></div>
+        <div class="hb-item"><span class="hb-label">Finished</span><span class="hb-val" id="s-finished">--</span></div>
+      </div>
+      <div class="gpu-wrap" id="gpu-section">
+        <div class="gpu-header"><span id="gpu-label">GPU</span><span id="gpu-pct">--</span></div>
+        <div class="gpu-track"><div class="gpu-fill" id="gpu-fill" style="width:0%"></div></div>
+        <div class="gpu-mem" id="gpu-mem"></div>
+      </div>
+      <div class="ts-footer" id="s-ts"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">Architecture</div>
+    <div class="card-body">
+      <div class="arch-grid">
+        <div class="arch-item"><span class="arch-role">Execution</span><span class="arch-name">Worker</span><span class="arch-desc">Acts on tasks. Researches, writes code, generates papers, posts results to Slack.</span></div>
+        <div class="arch-item"><span class="arch-role">Repair</span><span class="arch-name">Developer</span><span class="arch-desc">Audits and fixes the system. Runs daily during maintenance. Cannot modify behavioral contracts.</span></div>
+        <div class="arch-item"><span class="arch-role">Review</span><span class="arch-name">Tribune</span><span class="arch-desc">Adversarial reviewer. Challenges worker output. No role can certify its own work.</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">Showcase</div>
+    <div class="card-body">
+      <div class="showcase-grid">
+        <a class="showcase-item" href="./showcase/"><span class="showcase-label">Gallery</span><div class="showcase-title">Showcase</div><div class="showcase-desc">Tools, telemetry, and experiments.</div></a>
+        <a class="showcase-item" href="./tokenizers/"><span class="showcase-label">Interactive</span><div class="showcase-title">Tokenizer Lab</div><div class="showcase-desc">Compare tokenizers across models.</div></a>
+        <a class="showcase-item" href="./showcase/signal-deck/"><span class="showcase-label">Telemetry</span><div class="showcase-title">Signal Deck</div><div class="showcase-desc">Production telemetry and task flow.</div></a>
+        <a class="showcase-item" href="./showcase/res-publica/"><span class="showcase-label">Architecture</span><div class="showcase-title">Res Publica</div><div class="showcase-desc">Three-role separation exhibit.</div></a>
+      </div>
+    </div>
+  </div>
+</main>
+<div class="site-footer"><a href="https://github.com/murphytheagent">murphytheagent</a></div>
+<script>
+var D = {{ status_json }};
+(function(d) {
+  if (!d) return;
+  var pill = document.getElementById('s-pill');
+  if (d.agent_online) { pill.textContent = 'Online'; pill.className = 'pill pill-online'; }
+  else { pill.textContent = 'Offline'; pill.className = 'pill pill-offline'; }
+  var map = {
+    's-status': d.status || '--',
+    's-loops': d.loop_count != null ? d.loop_count.toLocaleString() : '--',
+    's-workers': d.max_workers || '--',
+    's-active': d.tasks ? d.tasks.active : '--',
+    's-queued': d.tasks ? d.tasks.queued : '--',
+    's-finished': d.tasks ? d.tasks.finished : '--',
+  };
+  for (var k in map) { var el = document.getElementById(k); if (el) el.textContent = map[k]; }
+  if (d.gpu && d.gpu.count > 0) {
+    document.getElementById('gpu-label').textContent = d.gpu.count + 'x ' + d.gpu.name;
+    document.getElementById('gpu-pct').textContent = d.gpu.avg_utilization_pct + '% util';
+    document.getElementById('gpu-fill').style.width = d.gpu.avg_utilization_pct + '%';
+    document.getElementById('gpu-mem').textContent = d.gpu.used_memory_gb + ' / ' + d.gpu.total_memory_gb + ' GB VRAM';
+  } else {
+    document.getElementById('gpu-section').style.display = 'none';
+  }
+  if (d.last_updated_utc) {
+    document.getElementById('s-ts').textContent = 'Last updated: ' + d.last_updated_utc;
+  }
+})(D);
+</script>
+</body>
+</html>

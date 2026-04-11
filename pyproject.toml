@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "murphy-agent"
+version = "0.4.0"
+description = "Self-hosted Slack supervisor for stateless AI workers"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+
+[project.scripts]
+murphy-agent = "src.loop.supervisor.main:main"
+murphy-dashboard = "src.loop.monitor.dashboard:main"
+murphy-init = "src.loop.bootstrap:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "jinja2>=3.1"]
+site = ["jinja2>=3.1"]
+
+[project.urls]
+Repository = "https://github.com/murphytheagent/murphy-supervisor"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/loop/tests"]

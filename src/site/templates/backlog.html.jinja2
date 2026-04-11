@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Murphy Backlog</title>
+<link rel="stylesheet" href="backlog.css">
+</head>
+<body>
+{{ site_header_html }}
+<main>
+  <section class="roadmap-hero">
+    <div class="hero-copy">
+      <div class="hero-kicker">Murphy's planning surface</div>
+      <h1>Backlog</h1>
+      <p>Fixes, feature work, and completions arranged as a public planning board instead of a raw utility sheet.</p>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card"><span>Fixes</span><strong id="fix-count">0</strong></div>
+      <div class="summary-card"><span>Features</span><strong id="feature-count">0</strong></div>
+      <div class="summary-card"><span>Completed</span><strong id="completed-count">0</strong></div>
+      <div class="summary-card"><span>Active now</span><strong id="active-count">0</strong></div>
+    </div>
+  </section>
+  <section class="settings">
+    <div class="settings-top" onclick="toggleSettings()" style="cursor:pointer">
+      <div>
+        <div class="settings-kicker">Dispatch</div>
+        <h2>Slack handoff</h2>
+      </div>
+      <div class="settings-state" id="settings-inline-status">No webhook saved on this browser yet.</div>
+    </div>
+    <p class="settings-copy">Save the webhook locally if you want to launch a backlog item directly from this page.</p>
+    <div class="settings-body" id="settings-body">
+      <div class="settings-row">
+        <label>Webhook URL</label>
+        <input type="text" id="cfg-webhook" placeholder="https://hooks.slack.com/services/T.../B.../XXX" />
+      </div>
+      <div class="settings-row">
+        <button class="settings-btn" onclick="saveSettings()">Save</button>
+      </div>
+      <div class="settings-status" id="settings-status"></div>
+    </div>
+  </section>
+  <section class="roadmap-stage">
+    <div class="tab-bar" id="tab-bar"></div>
+    <div id="roadmap-body"></div>
+  </section>
+</main>
+<div class="doc-modal-overlay" id="doc-modal-overlay" onclick="if(event.target===this)closeDocModal()">
+  <div class="doc-modal">
+    <div class="doc-modal-header">
+      <span class="doc-modal-title" id="doc-modal-title"></span>
+      <button class="doc-modal-refresh" id="doc-modal-refresh" onclick="refreshSession()" title="Refresh">&#x21bb;</button>
+      <button class="doc-modal-close" onclick="closeDocModal()">&times;</button>
+    </div>
+    <div class="doc-modal-body" id="doc-modal-body"></div>
+  </div>
+</div>
+<div class="dispatch-modal-overlay" id="dispatch-modal" onclick="if(event.target===this)closeDispatchModal()">
+  <div class="dispatch-modal">
+    <div class="dispatch-modal-header">
+      <span class="dispatch-modal-title" id="dispatch-modal-title">Dispatch</span>
+      <button class="dispatch-modal-close" onclick="closeDispatchModal()">&times;</button>
+    </div>
+    <div class="dispatch-modal-body">
+      <div class="dispatch-field">
+        <label class="dispatch-label">Additional instructions (optional)</label>
+        <textarea class="dispatch-textarea" id="dispatch-instructions" placeholder="e.g. Focus on error handling, skip tests for now..."></textarea>
+      </div>
+      <div class="dispatch-rounds-row">
+        <div class="dispatch-field">
+          <label class="dispatch-label">Plan review rounds</label>
+          <input type="number" class="dispatch-number-input" id="dispatch-plan-rounds" min="0" max="20" value="2" />
+        </div>
+        <div class="dispatch-field">
+          <label class="dispatch-label">Impl review rounds</label>
+          <input type="number" class="dispatch-number-input" id="dispatch-impl-rounds" min="0" max="20" value="3" />
+        </div>
+      </div>
+      <div class="dispatch-actions">
+        <button class="dispatch-cancel-btn" onclick="closeDispatchModal()">Cancel</button>
+        <button class="dispatch-confirm-btn" id="dispatch-confirm-btn" onclick="confirmDispatch()">Confirm dispatch</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="backlog.js"></script>
+</body>
+</html>
