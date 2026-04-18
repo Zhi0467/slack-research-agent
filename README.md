@@ -97,6 +97,13 @@ bash scripts/run.sh
 ```
 your Slack research agent is now running inside `supervisor` tmux session!
 
+
+## Usage
+1. `@<your-agent-username> task` to start a thread/task, example `@Murphy On my agentic Lean project, let's add and test a command that does the following...` or `@Murphy brief me on the current status of small swe train, and run the pilot study using our GPU node.`. You can send attachments, the agent can also send attachments back.
+2. Reply to a thread to continue working like a normal Chat session, unless the agent posted a reply indicating the task is done.
+3. Try re-mention in thread if the agent is taking too long to reply for a simple request.
+4. Use syntax `@<your-agent-username> !loop-3h task` to enforce a minimum working time, for example, `@Murphy !loop-4h fork OpenAI parameter golf repo and try to achieve the best score, report back only the final experiment logs synthesized in a PDF.`
+
 ## Setup Notes
 
 ### Slack
