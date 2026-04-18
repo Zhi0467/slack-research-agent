@@ -15,6 +15,29 @@ This repo is maintained as a standalone public package rather than a live mirror
 - Bundled public skill pack under `.agent/skills/`
 - Prompt and contract files you can customize for your own agent
 
+## Note
+- currently only codex is supported as the main worker backend.
+- currecntly only MacOS is supported.
+- **the Slack app must be installed under the agent's Slack app**, create an email and slack account for your Murphy, and invite it to your workspace first.
+- `git clone --recurse-submodules` is preferred, otherwise you need to `git submodule update --init --recursive` after cloning this repo.
+
+## Prerequisites
+
+```bash
+brew install codex
+brew install tmux
+```
+Also install `go` at https://go.dev/doc/install.
+
+Optional:
+
+- `gemini` CLI if you want Tribune review
+- Google Chrome if your optional consult MCP server needs it
+- ChatGPT Pro plan ($100/200 tier) if you want Murphy to also have the ability to consult ChatGPT Pro.
+- `npm install -g @anthropic-ai/claude-code` if you need claude code as the developer.
+
+Authenticate the CLIs before starting.
+
 ## Quick Start
 
 ```bash
@@ -27,7 +50,7 @@ cd mcp/slack-mcp-server
 go build -o build/slack-mcp-server ./cmd/slack-mcp-server/
 cd ../..
 
-murphy-init --default-channel-id C0123456789
+murphy-init --default-channel-id <your-default-channel-id>
 ```
 
 That command generates:
@@ -51,13 +74,15 @@ git submodule update --init --recursive
 
 Then:
 
-1. Import `slack-app-manifest.json` into https://api.slack.com/apps and install it to your workspace.
-2. Paste the resulting `xoxp-...` user token into the generated local config files.
-3. Run one cycle:
+1. Import `slack-app-manifest.json` into https://api.slack.com/apps, create a Slack from this manifest using the agent's Slack account.
+2. Install the app to your workspace, again under the agent's account.
+3. Paste the resulting `xoxp-...` user token into the generated local config files.
+4. Run one cycle:
 
 ```bash
 RUN_ONCE=true ./scripts/run.sh
 ```
+If you see a message at your default channel, the bootstrap is done.
 
 Files you will usually edit after bootstrap:
 
@@ -65,20 +90,12 @@ Files you will usually edit after bootstrap:
 - `.codex/config.toml`
 - `src/config/claude_mcp.json`
 
-## Prerequisites
-
+Finally start the supervisor/Murphy with tmux:
 ```bash
-brew install go node python@3.11
-npm install -g @openai/codex
-npm install -g @anthropic-ai/claude-code
+tmux new -s supervisor
+bash scripts/run.sh
 ```
-
-Optional:
-
-- `gemini` CLI if you want Tribune review
-- Google Chrome if your optional consult MCP server needs it
-
-Authenticate the CLIs you plan to use before starting.
+your Slack research agent is now running inside `supervisor` tmux session!
 
 ## Setup Notes
 
