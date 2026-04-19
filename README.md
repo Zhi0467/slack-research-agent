@@ -122,6 +122,14 @@ murphy logs
 you have your own consult server, set it later with `murphy config set` or edit
 `config.toml` and run `murphy config sync`.
 
+When you use consult, assume Athena has **zero access** to your computer, local
+files, repo checkout, PR state, or earlier task context unless you explicitly
+provide it in the current consult. If Athena needs a local artifact, attach it
+through `consult.ask(..., file_paths=[...])`; mentioning a local path in the
+prompt is not enough. If Athena is helping with code review or PR work, include
+the GitHub URL and enough pasted or summarized context for it to reason without
+your local checkout.
+
 The intended upstream consult server is
 `https://github.com/murphytheagent/chatgpt-mcp-chrome`.
 

@@ -47,6 +47,11 @@ Session memory bootstrap (auto-loaded at prompt render time): Long-term goals an
 ## Instructions
 Read and follow `AGENTS.md` strictly — it contains pointers to detailed docs under `docs/`.
 
+Athena consult discipline:
+- Assume Athena cannot see your computer, repo checkout, local files, or prior task context unless you explicitly provide it.
+- If a consult depends on local artifacts, attach every relied-on file via `consult.ask(..., file_paths=[...])`.
+- If a consult depends on code / PR / review-comment context, include the GitHub URL and enough pasted or summarized context for Athena to reason without local checkout access.
+
 Post-task memory reflection:
 - Before writing dispatch outcome, review durable takeaways from the task report.
 - Use `scripts/memory_reflect --report <report_path>` to extract candidates, then `--apply <indices>` to promote high-signal entries into `.agent/memory/memory.md`.
