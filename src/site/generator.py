@@ -46,7 +46,7 @@ SHOWCASE_COPY_DIRS = ("showcase", "tokenizers", "assets")
 
 # External showcase links rendered as the Launchpad nav band.
 SITE_LINKS: List[Dict[str, str]] = [
-    {"label": "Repo", "href": "https://github.com/murphytheagent/murphy-supervisor", "desc": "Project repository"},
+    {"label": "Repo", "href": "https://github.com/Zhi0467/slack-research-agent", "desc": "Project repository"},
     {"label": "Showcase", "href": "showcase/", "desc": "Browser tools and demos"},
 ]
 

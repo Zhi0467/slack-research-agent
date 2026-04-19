@@ -111,7 +111,7 @@ BACKLOG_PLAN_LINK_RE = re.compile(r"\[Plan\]\(([^)]+)\)")
 BACKLOG_ISSUE_LINK_RE = re.compile(r"\[Issue\]\(([^)]+)\)")
 BACKLOG_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 SITE_LINKS = [
-    {"label": "Repo", "href": "https://github.com/murphytheagent/murphy-supervisor", "desc": "Project repository"},
+    {"label": "Repo", "href": "https://github.com/Zhi0467/slack-research-agent", "desc": "Project repository"},
     {"label": "Showcase", "href": "showcase/", "desc": "Browser tools and demos"},
 ]
 ROADMAP_THEME_PUBLIC_COPY = {
