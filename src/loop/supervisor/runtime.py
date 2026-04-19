@@ -2864,6 +2864,7 @@ class Supervisor:
                         out.append("Address this feedback in your revised draft.")
                 continue
             line = line.replace("{{SLACK_ID}}", self.resolve_slack_id())
+            line = line.replace("{{AGENT_NAME}}", self.cfg.agent_name)
             line = line.replace("{{DISPATCH_OUTCOME_PATH}}", outcome_path)
             out.append(line)
 
@@ -2880,6 +2881,7 @@ class Supervisor:
         conversation context and dispatch JSON.
         """
         review_template = self.maintenance.load_prompt(phase)
+        review_template = review_template.replace("{{AGENT_NAME}}", self.cfg.agent_name)
         thread_context = str(dispatch_json.get("mention_text") or "")
         task_key = str(dispatch_json.get("mention_ts") or self.selected_key or "")
         outcome_path = str(self._outcome_path_for_task(task_key)) if task_key else str(self.cfg.dispatch_outcome_file)
@@ -5034,6 +5036,7 @@ class Supervisor:
                         out.append("Address this feedback in your revised draft.")
                 continue
             line = line.replace("{{SLACK_ID}}", self.resolve_slack_id())
+            line = line.replace("{{AGENT_NAME}}", self.cfg.agent_name)
             line = line.replace("{{DISPATCH_OUTCOME_PATH}}", outcome_path)
             out.append(line)
 
@@ -5266,6 +5269,7 @@ class Supervisor:
                 merge_tpl_path.read_text(encoding="utf-8")
                 .replace("{{REPO_ROOT}}", str(repo_root))
                 .replace("{{BRANCH_NAME}}", branch)
+                .replace("{{AGENT_NAME}}", self.cfg.agent_name)
             )
         except FileNotFoundError:
             self.log_line(

@@ -49,6 +49,7 @@ class Config:
         self.completion_gate = get("COMPLETION_GATE", "high")
         self.prompt_memory_total_char_limit = int(get("PROMPT_MEMORY_TOTAL_CHAR_LIMIT", "20000"))
         self.worker_id = get("WORKER_ID", f"{socket.gethostname()}-agent")
+        self.agent_name = get("AGENT_NAME", "Murphy").strip() or "Murphy"
         self.run_once = parse_bool(get("RUN_ONCE", "false"))
         self.default_channel_id = get("DEFAULT_CHANNEL_ID", "")
         self.max_concurrent_workers = int(get("MAX_CONCURRENT_WORKERS", "1"))

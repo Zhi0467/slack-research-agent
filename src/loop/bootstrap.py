@@ -10,6 +10,7 @@ from pathlib import Path
 
 from src import __version__ as PACKAGE_VERSION
 
+DEFAULT_AGENT_NAME = "Murphy"
 DEFAULT_SLACK_APP_NAME = "Murphy Agent"
 DEFAULT_SLACK_APP_DESCRIPTION = "Self-hosted Slack supervisor for long-running AI work"
 DEFAULT_CHATGPT_PROJECT = "Murphy"
@@ -74,10 +75,12 @@ def _read_required(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _render_env(template_root: Path, default_channel_id: str) -> str:
+def _render_env(template_root: Path, default_channel_id: str, agent_name: str) -> str:
     text = _read_required(template_root / ".env.example")
     if default_channel_id:
         text = text.replace("DEFAULT_CHANNEL_ID=C0YOUR_CHANNEL_ID", f"DEFAULT_CHANNEL_ID={default_channel_id}")
+    if agent_name and agent_name != DEFAULT_AGENT_NAME:
+        text = text.replace("# AGENT_NAME=Murphy", f"AGENT_NAME={agent_name}")
     return text
 
 
@@ -122,12 +125,13 @@ def bootstrap_repo(
     default_channel_id: str = "",
     chatgpt_project: str = DEFAULT_CHATGPT_PROJECT,
     manifest_path: Path = DEFAULT_MANIFEST_PATH,
+    agent_name: str = DEFAULT_AGENT_NAME,
 ) -> list[tuple[str, str]]:
     repo_root = repo_root.resolve()
     template_root = repo_root if template_root is None else template_root.resolve()
 
     writes = [
-        (Path(".env"), _render_env(template_root, default_channel_id)),
+        (Path(".env"), _render_env(template_root, default_channel_id, agent_name)),
         (Path(".codex/config.toml"), _render_codex_config(template_root, repo_root, chatgpt_project)),
         (Path("src/config/claude_mcp.json"), _render_claude_config(template_root, repo_root)),
         (manifest_path, build_slack_manifest(slack_app_name, slack_app_description)),
@@ -161,6 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite existing generated files instead of skipping them.",
+    )
+    parser.add_argument(
+        "--agent-name",
+        default=DEFAULT_AGENT_NAME,
+        help=(
+            "Public-facing agent name used inside worker/reviewer prompts "
+            "(sets AGENT_NAME in .env). Defaults to the Slack app name when "
+            "--slack-app-name is a single word."
+        ),
     )
     parser.add_argument(
         "--slack-app-name",
@@ -208,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             default_channel_id=args.default_channel_id,
             chatgpt_project=args.chatgpt_project,
             manifest_path=Path(args.manifest_path),
+            agent_name=args.agent_name,
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)

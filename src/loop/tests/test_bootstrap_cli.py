@@ -59,6 +59,25 @@ class TestBootstrapRepo(unittest.TestCase):
             self.assertIn("# Curated Memory", memory_text)
             self.assertIn("# Long-Term Goals", goals_text)
 
+    def test_agent_name_written_into_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bootstrap_repo(
+                root,
+                template_root=REPO_ROOT,
+                agent_name="Terry",
+            )
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("AGENT_NAME=Terry", env_text)
+            self.assertNotIn("# AGENT_NAME=Murphy", env_text)
+
+    def test_default_agent_name_leaves_env_commented(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bootstrap_repo(root, template_root=REPO_ROOT)
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("# AGENT_NAME=Murphy", env_text)
+
     def test_skips_existing_files_without_force(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

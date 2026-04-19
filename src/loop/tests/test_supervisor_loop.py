@@ -125,13 +125,13 @@ def _make_supervisor(tmp: Path, env_overrides: dict | None = None) -> sl.Supervi
         os.environ[k] = v
     try:
         cfg = sl.Config(conf_path)
+        sup = sl.Supervisor(cfg)
     finally:
         for k, orig in saved.items():
             if orig is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = orig
-    sup = sl.Supervisor(cfg)
     # Plan-51 safety net: prevent tests from triggering real git commits
     sup._auto_commit_system_files = lambda: None
     return sup

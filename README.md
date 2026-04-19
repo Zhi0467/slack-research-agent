@@ -54,6 +54,19 @@ cd ../..
 murphy-init --default-channel-id <your-default-channel-id>
 ```
 
+If your Slack app is registered under a name other than "Murphy" (e.g. "Terry"),
+pass `--agent-name` so the supervisor prompts address the worker by that name:
+
+```bash
+murphy-init --default-channel-id <your-default-channel-id> --agent-name Terry
+```
+
+This writes `AGENT_NAME=Terry` into `.env`. You can also edit `.env` after the
+fact, or export `AGENT_NAME` before starting the supervisor. The value is
+substituted into `src/prompts/session.md`, the developer/Tribune review
+templates, and the merge-fallback prompt, so the worker consistently identifies
+as the agent you registered on Slack.
+
 That command generates:
 
 - `.env`
@@ -173,6 +186,7 @@ Important variables:
 
 - `SLACK_USER_TOKEN`
 - `DEFAULT_CHANNEL_ID`
+- `AGENT_NAME` (public-facing agent name used in prompts; default `Murphy`)
 - `WORKER_CMD`
 - `DEV_REVIEW_CMD`
 - `MAX_CONCURRENT_WORKERS`

@@ -82,7 +82,7 @@ class MaintenanceManager:
         ),
         "tribune_maintenance_template": (
             "Tribune maintenance review:\n"
-            "1) Read Murphy's phase 0 reflect report and assess quality.\n"
+            "1) Read {{AGENT_NAME}}'s phase 0 reflect report and assess quality.\n"
             "2) Review Developer's recent commits for correctness and design philosophy compliance.\n"
             "3) Run python3 scripts/validate_agent_state.py for file integrity.\n"
             "4) Audit recent Slack interactions for communication quality.\n"
