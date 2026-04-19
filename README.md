@@ -19,6 +19,7 @@ This repo is maintained as a standalone public package rather than a live mirror
 - currently only codex is supported as the main worker backend.
 - currecntly only MacOS is supported.
 - **the Slack app must be installed under the agent's Slack app**, create an email and slack account for your Murphy, and invite it to your workspace first.
+- This repository is the canonical source for the public Murphy supervisor package. The bundled Slack MCP submodule intentionally still resolves to `murphytheagent/slack-mcp-server` as an upstream dependency. If you want that MCP to come from your own fork instead, update `.gitmodules` and run `git submodule sync --recursive`.
 - `git clone --recurse-submodules` is preferred, otherwise you need to `git submodule update --init --recursive` after cloning this repo.
 
 ## Prerequisites
@@ -41,7 +42,7 @@ Authenticate the CLIs before starting.
 ## Quick Start
 
 ```bash
-git clone --recurse-submodules https://github.com/murphytheagent/murphy-supervisor.git murphy-agent
+git clone --recurse-submodules https://github.com/Zhi0467/slack-research-agent.git murphy-agent
 cd murphy-agent
 
 python3 -m pip install -e '.[dev]'
