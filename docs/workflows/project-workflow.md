@@ -21,7 +21,7 @@ cat > /tmp/project_prompt.md << 'EOF'
 [Task description with specific instructions]
 
 Context:
-- [Prior findings, constraints, what Athena said]
+- [Prior findings, constraints, Consult MCP output]
 - [Relevant code paths or file references]
 
 Instructions:
@@ -75,14 +75,14 @@ echo $?
 | Has Access | Does NOT Have |
 |---|---|
 | Project's `AGENTS.md` / `CLAUDE.md` (auto-loaded from CWD) | Slack MCP (parent handles all Slack I/O) |
-| `consult` MCP (Athena) for research questions | Root-repo `.agent/` state files |
+| `consult` MCP for research questions | Root-repo `.agent/` state files |
 | Web search | |
 | Full shell access (`--yolo` + `danger-full-access`) | |
 
 ## Prompt Guidelines
 
 - **Be specific:** include concrete file paths, function names, test commands
-- **Provide context:** prior findings, Athena recommendations, constraints
+- **Provide context:** prior findings, Consult MCP recommendations, constraints
 - **Set expectations:** "commit changes", "run tests", "describe results in final message"
 - **No Slack:** always include "Do NOT communicate on Slack — parent handles all Slack I/O"
 

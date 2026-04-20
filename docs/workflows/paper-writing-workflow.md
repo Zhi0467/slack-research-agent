@@ -58,7 +58,7 @@ These rules govern how Murphy edits manuscripts during collaborative writing.
 - **Review-mode attribution.** In review mode, mark all Murphy-authored manuscript spans with the project's review color. Use the project's comment macro (e.g., `\murphy{...}`) for review notes. Let the macro supply the author label — don't add a redundant prefix. Remove visible markup only if the human explicitly asks for a clean copy.
 - **Comment placement.** Place each comment inside the section it addresses. A comment about Section 2 goes in Section 2, not at the end of Section 1.
 - **Comment-only reviews.** When asked to review without editing in-place: preserve existing text, add clearly attributed comments, and append new prose where completion is needed. Do not silently rewrite.
-- **Consult Athena for theory-heavy sections.** Run an Athena pass on related work, comparison claims, and technical framing before finalizing. Keep resulting edits within the requested scope.
+- **Use the Consult MCP for theory-heavy sections.** Run a Consult MCP pass on related work, comparison claims, and technical framing before finalizing. Keep resulting edits within the requested scope.
 
 ### Sync and delivery
 

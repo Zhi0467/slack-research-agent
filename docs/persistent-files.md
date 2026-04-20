@@ -16,8 +16,8 @@ Your task is keyed by `mention_ts` and contains the full task payload.
 ### Project state:
 - `projects/<goal_slug>.md` — evolving report for each long-term project.
 - `.agent/projects/<slug>.json` — per-project conversation history and summaries. Read the relevant project JSON when you need context about prior work on a project.
-- `.agent/projects/<slug>.consult.jsonl` — per-project Athena consultation history (machine-assembled from global archive). Contains prompt, response, mode, chat_id, turn for each consult call.
-- `.agent/runtime/consult_history/{task_id}.jsonl` — per-task Athena consultation records (global archive). Complete log with all metadata.
+- `.agent/projects/<slug>.consult.jsonl` — per-project Consult MCP history (machine-assembled from global archive). Contains prompt, response, mode, chat_id, turn for each consult call.
+- `.agent/runtime/consult_history/{task_id}.jsonl` — per-task Consult MCP records (global archive). Complete log with all metadata.
 
 ### Supervisor-managed (read-only):
 - `.agent/runtime/logs/runner.log` — append-only heartbeat/session log from the external loop.

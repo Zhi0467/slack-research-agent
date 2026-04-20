@@ -77,7 +77,7 @@ Steps:
 `roadmap.md` must include:
 - **Milestones** with success/gate criteria
 - **Chronological activity log entries** under each milestone — dated (UTC), factual, concise. These entries are append-only and record what happened: experiments run, results obtained, approach changes, decisions made, consultations held.
-- **Athena consultation entries** must include: mode, number of turns if multi-turn, brief summary of the question and key insight, and a pointer to the full conversation record (`.agent/runtime/consult_history/{task_id}.jsonl`).
+- **Consult MCP entries** must include: mode, number of turns if multi-turn, brief summary of the question and key insight, and a pointer to the full conversation record (`.agent/runtime/consult_history/{task_id}.jsonl`).
 - A `Last updated` timestamp that stays current.
 
 Beyond these requirements, organize `roadmap.md` however best fits the project.

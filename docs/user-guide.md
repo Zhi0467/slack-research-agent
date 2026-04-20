@@ -26,7 +26,7 @@ Murphy will reply in the same thread with progress updates as she works, then po
 | **GPU experiments** | "Train this model on the GPU node with these hyperparameters" |
 | **PDF delivery** | Substantive research content is auto-compiled to typeset LaTeX PDFs |
 | **File/PDF analysis** | Attach a file to your message — Murphy can read and analyze it |
-| **Consult Athena** | "Ask Athena to verify this proof" — invokes an external expert |
+| **Consult MCP** | "Use the Consult MCP to verify this proof" — invokes an external expert model |
 
 ## How to Interact
 
@@ -73,19 +73,19 @@ If a task is marked **done**, plain replies in the thread won't reactivate it. T
 - **You can attach files.** PDFs, code files, and data can be attached directly to your Slack message for Murphy to analyze.
 - **Murphy works asynchronously.** You don't need to wait — send your request and check back later. Murphy will post results in the thread when ready.
 
-## Athena — External Expert
+## Consult MCP — External Expert
 
-If you configure a consult MCP server, Murphy can use an external expert called **Athena** for problems that benefit from a second opinion — particularly mathematical proofs, research planning, and domain-specific reasoning.
+If you configure a consult MCP server, Murphy can route questions to it for problems that benefit from a second opinion — particularly mathematical proofs, research planning, and domain-specific reasoning.
 
-You can explicitly request Athena's involvement:
+You can explicitly request a Consult MCP call:
 
 ```
-@Murphy Ask Athena to verify this convergence proof
-@Murphy Have Athena review my draft and identify logical gaps
-@Murphy Consult Athena on the theoretical implications of these results
+@Murphy Use the Consult MCP to verify this convergence proof
+@Murphy Run a Consult MCP pass on my draft to identify logical gaps
+@Murphy Consult on the theoretical implications of these results
 ```
 
-When that integration is enabled, Murphy can also invoke Athena on its own when it judges that external expertise would improve the result.
+When that integration is enabled, Murphy can also invoke the Consult MCP on its own when it judges that external expertise would improve the result.
 
 ## FAQ
 

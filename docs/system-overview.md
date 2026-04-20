@@ -78,7 +78,7 @@ With multiple Tribune rounds configured, the Developer and Tribune iterate: the 
 
 - **Memory** — The Worker maintains durable memory (facts, constraints, user preferences) and episodic daily memory across sessions. Memory is injected into each dispatch prompt.
 
-- **MCP Servers** — The roles access external services through Model Context Protocol servers: Slack for communication, plus any optional integrations you configure such as an external consultation service ("Athena"). The Tribune has read-only Slack access.
+- **MCP Servers** — The roles access external services through Model Context Protocol servers: Slack for communication, plus any optional integrations you configure such as an external consultation service (Consult MCP). The Tribune has read-only Slack access.
 
 - **Dashboard** — A static HTML dashboard published to GitHub Pages shows live system status, active workers, and task history.
 

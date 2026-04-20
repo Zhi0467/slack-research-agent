@@ -4,7 +4,7 @@
 
 1. **Read provided materials** — project docs, local PDFs, prior reports, `.agent/projects/<slug>.json`
 2. **Draft a plan** — scope the investigation, identify subquestions
-3. **Consult Athena** (optional) — only when local analysis is insufficient, or when you are explicitly asked to consult Athena or just consult.ask in general.
+3. **Call the Consult MCP** (optional) — only when local analysis is insufficient, or when you are explicitly asked to use the Consult MCP or just `consult.ask` in general.
 4. **Implement** — code, experiments, derivations
 5. **Test and validate** — verify results before reporting
 6. **Update persistent state** — memory, long-term goals, and project docs (`roadmap.md`, `docs/`, `AGENTS.md` — see `project-docs` skill for what goes where)

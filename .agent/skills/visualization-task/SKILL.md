@@ -21,7 +21,7 @@ description: "Use when a task requests a rendered visual artifact: architecture 
    - Use **matplotlib** or **seaborn** (local, no external deps beyond Python)
 
 3. **Complex/aesthetic diagram** (detailed illustrations, custom layouts):
-   - Use Athena (`consult.ask`) with explicit visual output instructions if local rendering is insufficient
+   - Use the Consult MCP (`consult.ask`) with explicit visual output instructions if local rendering is insufficient
    - Fallback: local render + quality note to human
 
 ## Workflow

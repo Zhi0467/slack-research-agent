@@ -177,7 +177,7 @@ ROADMAP_GOAL_PUBLIC_COPY = {
         "Session Continuity",
         "Carry active work across new sessions with less restart friction.",
     ),
-    "Athena integration": (
+    "Consult MCP integration": (
         "External Reasoning",
         "Specialist consultation with durable history and reusable context.",
     ),

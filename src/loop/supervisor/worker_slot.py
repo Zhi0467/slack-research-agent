@@ -693,7 +693,7 @@ class WorkerSlot:
 
         When a tool call is detected in flight (via session log tail),
         the longer *tool_timeout_sec* ceiling is used instead, so that
-        legitimate long MCP calls (e.g. Athena consults) are not killed.
+        legitimate long MCP calls (e.g. Consult MCP calls) are not killed.
         """
         if self.started_at is None:
             return None

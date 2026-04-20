@@ -15,12 +15,12 @@ graph TD
         Work --> Report["Report & deliver PDF"]
     end
 
-    Work -. "consult" .-> Athena
+    Work -. "consult" .-> Consult
     Report -- "outcome" --> SV
     Murphy -- "save" --> State
     Murphy -. "messages" .-> Slack
 
-    subgraph Athena ["🔮 Athena (ChatGPT Pro)"]
+    subgraph Consult ["🔮 Consult MCP"]
         Deep["Deep — proofs, derivations, PDFs"]
         Std["Standard — quick Q&A"]
     end
@@ -42,7 +42,7 @@ graph TD
     classDef slack fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px,color:#4A148C
     classDef sv fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#0D47A1
     classDef worker fill:#FFF3E0,stroke:#E65100,stroke-width:1.5px,color:#BF360C
-    classDef athena fill:#FCE4EC,stroke:#C62828,stroke-width:1.5px,color:#B71C1C
+    classDef consult fill:#FCE4EC,stroke:#C62828,stroke-width:1.5px,color:#B71C1C
     classDef state fill:#ECEFF1,stroke:#546E7A,stroke-width:1px,color:#37474F
     classDef maint fill:#FFFDE7,stroke:#F57F17,stroke-width:1.5px,color:#E65100
     classDef dash fill:#E0F7FA,stroke:#00838F,stroke-width:1.5px,color:#006064
@@ -51,7 +51,7 @@ graph TD
     class Slack slack
     class SV sv
     class Read,Work,Report worker
-    class Deep,Std athena
+    class Deep,Std consult
     class MemGoals,Projects state
     class Reflect,DevRev maint
     class Dash dash

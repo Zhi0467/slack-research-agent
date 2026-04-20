@@ -20,7 +20,7 @@ go build -o build/slack-mcp-server ./cmd/slack-mcp-server/
 
 The public package does not bundle a consult server. By default, `murphy-init` leaves `[mcp_servers.consult]` disabled in `.codex/config.toml`.
 
-If you want Athena-style second opinions, point that section at a consult MCP server you control. The supervisor still preserves consult history and per-task wiring when a consult server is configured.
+If you want second opinions from an external model, point that section at a consult MCP server you control. The supervisor still preserves consult history and per-task wiring when a consult server is configured.
 
 ## Tribune
 

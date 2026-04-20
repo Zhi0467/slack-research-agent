@@ -164,7 +164,7 @@ fi
 REVIEW_FILE="$(mktemp -t code_review.XXXXXXXX)"
 
 # ---- Build codex review command ----
-# MCP isolation: disable Athena/consult and Slack via -c overrides.
+# MCP isolation: disable consult MCP and Slack via -c overrides.
 # The reviewer is a pure code reviewer — no external tool access.
 
 CMD=(codex review -c 'mcp_servers.consult.command=""' -c 'mcp_servers.slack.command=""')

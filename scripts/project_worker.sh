@@ -5,7 +5,7 @@
 #   scripts/project_worker.sh <project-slug> <prompt-file> [--timeout <seconds>]
 #
 # The sub-session inherits the project's AGENTS.md/CLAUDE.md (loaded from CWD),
-# has access to consult (Athena) but NOT Slack, and runs with full autonomy.
+# has access to the consult MCP but NOT Slack, and runs with full autonomy.
 #
 # Exit codes:
 #   0   — sub-session completed successfully
