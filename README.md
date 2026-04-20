@@ -76,6 +76,48 @@ It also writes absolute repo paths into `.codex/config.toml` and
 `src/config/claude_mcp.json`, so worker sessions launched from git worktrees
 still resolve the shared MCP binaries correctly.
 
+Then:
+
+1. Import `slack-app-manifest.json` into https://api.slack.com/apps, create a Slack from this manifest using the agent's Slack account.
+2. Install the app to your workspace, again under the agent's account.
+3. If you did not provide the `xoxp-...` token during `murphy init`, add it with `murphy config set slack.user_token <token>` and run `murphy config sync --force`.
+4. Run one cycle:
+
+```bash
+murphy start --run-once
+```
+If you see a message at your default channel, the bootstrap is done.
+
+The primary day-2 config surface is:
+
+- `config.toml`
+- `murphy config show`
+- `murphy config set <key> <value>`
+- `murphy config unset <key>`
+- `murphy config doctor`
+- `murphy config sync`
+
+The generated files remain available as advanced escape hatches:
+
+- `.env`
+- `.codex/config.toml`
+- `src/config/claude_mcp.json`
+
+Finally start the supervisor with tmux-managed lifecycle commands:
+
+```bash
+murphy start
+```
+
+Useful operator commands:
+
+```bash
+murphy status
+murphy restart
+murphy logs
+```
+
+### Optional consult: Let your agent use ChatGPT Pro via Chrome
 `murphy init` leaves the optional `consult` MCP entry disabled by default. If
 you have your own consult server, set it later with `murphy config set` or edit
 `config.toml` and run `murphy config sync`.
@@ -126,47 +168,6 @@ At runtime Murphy also injects `CONSULT_SLOT_ID`, `CONSULT_TASK_ID`, and
 `CONSULT_HISTORY_DIR` into `[mcp_servers.consult.env]` so the consult server
 can preserve per-task history and parallel-slot isolation.
 
-
-Then:
-
-1. Import `slack-app-manifest.json` into https://api.slack.com/apps, create a Slack from this manifest using the agent's Slack account.
-2. Install the app to your workspace, again under the agent's account.
-3. If you did not provide the `xoxp-...` token during `murphy init`, add it with `murphy config set slack.user_token <token>` and run `murphy config sync --force`.
-4. Run one cycle:
-
-```bash
-murphy start --run-once
-```
-If you see a message at your default channel, the bootstrap is done.
-
-The primary day-2 config surface is:
-
-- `config.toml`
-- `murphy config show`
-- `murphy config set <key> <value>`
-- `murphy config unset <key>`
-- `murphy config doctor`
-- `murphy config sync`
-
-The generated files remain available as advanced escape hatches:
-
-- `.env`
-- `.codex/config.toml`
-- `src/config/claude_mcp.json`
-
-Finally start the supervisor with tmux-managed lifecycle commands:
-
-```bash
-murphy start
-```
-
-Useful operator commands:
-
-```bash
-murphy status
-murphy restart
-murphy logs
-```
 
 
 ## Usage
