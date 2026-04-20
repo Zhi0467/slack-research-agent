@@ -7,16 +7,22 @@ import os
 import shlex
 import socket
 from pathlib import Path
+from typing import Mapping, Optional
 
 from .utils import parse_bool, parse_conf_defaults
 
 
 class Config:
-    def __init__(self, loop_config_file: Path) -> None:
+    def __init__(
+        self,
+        loop_config_file: Path,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> None:
         defaults = parse_conf_defaults(loop_config_file)
+        env_map: Mapping[str, str] = env if env is not None else os.environ
 
         def get(name: str, fallback: str) -> str:
-            return os.environ.get(name, defaults.get(name, fallback))
+            return env_map.get(name, defaults.get(name, fallback))
 
         self.session_minutes = int(get("SESSION_MINUTES", "360"))
         self.sleep_normal = int(get("SLEEP_NORMAL", "120"))
@@ -50,6 +56,7 @@ class Config:
         self.prompt_memory_total_char_limit = int(get("PROMPT_MEMORY_TOTAL_CHAR_LIMIT", "20000"))
         self.worker_id = get("WORKER_ID", f"{socket.gethostname()}-agent")
         self.agent_name = get("AGENT_NAME", "Murphy").strip() or "Murphy"
+        self.agent_user_id = get("AGENT_USER_ID", "").strip()
         self.run_once = parse_bool(get("RUN_ONCE", "false"))
         self.default_channel_id = get("DEFAULT_CHANNEL_ID", "")
         self.max_concurrent_workers = int(get("MAX_CONCURRENT_WORKERS", "1"))

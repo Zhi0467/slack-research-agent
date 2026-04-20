@@ -6,7 +6,7 @@ Developer guide for Claude Code sessions working on the Murphy Agent codebase.
 
 Murphy Agent is a self-hosted Slack supervisor. The Python supervisor polls Slack, dispatches stateless worker sessions, keeps task state on disk, and optionally runs developer review, Tribune review, and dashboard export flows.
 
-The worker behavioral contract lives in `AGENTS.md`. The core implementation lives in `src/loop/`.
+The core implementation lives in `src/loop/`.
 
 ## Running the Supervisor
 

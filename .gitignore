@@ -5,6 +5,9 @@
 
 # Environment and credentials
 .env
+config.toml
+# Legacy local config path from the earlier unified-cli draft.
+.murphy/
 .codex/config.toml
 src/config/claude_mcp.json
 

@@ -51,34 +51,8 @@ cd mcp/slack-mcp-server
 go build -o build/slack-mcp-server ./cmd/slack-mcp-server/
 cd ../..
 
-murphy-init --default-channel-id <your-default-channel-id>
+murphy init --default-channel-id <your-default-channel-id> --agent-name <agent-name-of-your-choice>
 ```
-
-If your Slack app is registered under a name other than "Murphy" (e.g. "Terry"),
-pass `--agent-name` so the supervisor prompts address the worker by that name:
-
-```bash
-murphy-init --default-channel-id <your-default-channel-id> --agent-name Terry
-```
-
-This writes `AGENT_NAME=Terry` into `.env`. You can also edit `.env` after the
-fact, or export `AGENT_NAME` before starting the supervisor. The value is
-substituted into `src/prompts/session.md`, the developer/Tribune review
-templates, and the merge-fallback prompt, so the worker consistently identifies
-as the agent you registered on Slack.
-
-That command generates:
-
-- `.env`
-- `.codex/config.toml`
-- `src/config/claude_mcp.json`
-- `slack-app-manifest.json`
-- `.agent/memory/memory.md`
-- `.agent/memory/long_term_goals.md`
-
-It also writes absolute repo paths into `.codex/config.toml` and `src/config/claude_mcp.json`, so worker sessions launched from git worktrees still resolve the shared MCP binaries correctly.
-
-`murphy-init` leaves the optional `consult` MCP entry disabled by default. If you have your own consult server, wire it into `.codex/config.toml` after bootstrap.
 
 If you already cloned without submodules:
 
@@ -86,30 +60,87 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
+
+`murphy init` writes the canonical local config to `config.toml`, then
+renders the generated projections:
+
+- `config.toml`
+- `.env`
+- `.codex/config.toml`
+- `src/config/claude_mcp.json`
+- `slack-app-manifest.json`
+- `.agent/memory/memory.md`
+- `.agent/memory/long_term_goals.md`
+
+It also writes absolute repo paths into `.codex/config.toml` and
+`src/config/claude_mcp.json`, so worker sessions launched from git worktrees
+still resolve the shared MCP binaries correctly.
+
+`murphy init` leaves the optional `consult` MCP entry disabled by default. If
+you have your own consult server, set it later with `murphy config set` or edit
+`config.toml` and run `murphy config sync`.
+
+Minimal consult setup:
+
+```bash
+murphy config set consult.command /absolute/path/to/your-consult-server
+murphy config set consult.args arg1,arg2,arg3
+murphy config set worker.chatgpt_project Murphy
+murphy config sync --force
+```
+
+That writes the consult server into `.codex/config.toml` under
+`[mcp_servers.consult]`. The actual args depend on the consult server you are
+running. Today the canonical config models only:
+
+- `consult.command`
+- `consult.args`
+- `worker.chatgpt_project` for `[mcp_servers.consult.env].CHATGPT_DEFAULT_PROJECT`
+
+If your consult server needs additional env vars beyond
+`CHATGPT_DEFAULT_PROJECT`, the CLI does not have first-class keys for them yet.
+
+
 Then:
 
 1. Import `slack-app-manifest.json` into https://api.slack.com/apps, create a Slack from this manifest using the agent's Slack account.
 2. Install the app to your workspace, again under the agent's account.
-3. Paste the resulting `xoxp-...` user token into the generated local config files.
+3. If you did not provide the `xoxp-...` token during `murphy init`, add it with `murphy config set slack.user_token <token>` and run `murphy config sync --force`.
 4. Run one cycle:
 
 ```bash
-RUN_ONCE=true ./scripts/run.sh
+murphy start --run-once
 ```
 If you see a message at your default channel, the bootstrap is done.
 
-Files you will usually edit after bootstrap:
+The primary day-2 config surface is:
+
+- `config.toml`
+- `murphy config show`
+- `murphy config set <key> <value>`
+- `murphy config unset <key>`
+- `murphy config doctor`
+- `murphy config sync`
+
+The generated files remain available as advanced escape hatches:
 
 - `.env`
 - `.codex/config.toml`
 - `src/config/claude_mcp.json`
 
-Finally start the supervisor/Murphy with tmux:
+Finally start the supervisor with tmux-managed lifecycle commands:
+
 ```bash
-tmux new -s supervisor
-bash scripts/run.sh
+murphy start
 ```
-your Slack research agent is now running inside `supervisor` tmux session!
+
+Useful operator commands:
+
+```bash
+murphy status
+murphy restart
+murphy logs
+```
 
 
 ## Usage
@@ -122,7 +153,7 @@ your Slack research agent is now running inside `supervisor` tmux session!
 
 ### Slack
 
-Murphy operates as a Slack user. `murphy-init` generates `slack-app-manifest.json` with the user-token scopes the public setup needs, including:
+Murphy operates as a Slack user. `murphy init` generates `slack-app-manifest.json` with the user-token scopes the public setup needs, including:
 
 - `channels:history`
 - `channels:read`
@@ -148,13 +179,17 @@ The older `slack-claude-bot` helper is private and is intentionally not part of 
 
 ### Codex Worker
 
-The main worker uses `.codex/config.toml`. `murphy-init` rewrites the tracked template (`.codex/config.example.toml`) into a local config with absolute repo paths so worktree-launched workers do not break.
+The main worker uses `.codex/config.toml`. `murphy init` rewrites the tracked
+template into a local config with absolute repo paths so worktree-launched
+workers do not break.
 
 Consult is optional in the public package. The generated config leaves `[mcp_servers.consult]` disabled until you point it at a server you control.
 
 ### Claude Developer Review
 
-Maintenance phase 1 uses `src/config/claude_mcp.json`. `murphy-init` rewrites `src/config/claude_mcp.example.json` the same way, and if Claude Code is not installed the maintenance loop automatically skips that developer-review phase instead of crashing later.
+Maintenance phase 1 uses `src/config/claude_mcp.json`. `murphy init` rewrites
+that file the same way, and if Claude Code is not installed the maintenance
+loop automatically skips that developer-review phase instead of crashing later.
 
 ### Tribune Review
 
@@ -180,19 +215,18 @@ If you want continuous static export, configure `DASHBOARD_*` vars in `.env` and
 
 ## Configuration
 
-Main defaults live in `src/config/supervisor_loop.conf` and can be overridden from `.env` or the shell.
+The canonical local config lives in root `config.toml`. `murphy init` owns
+first-run setup, and `murphy config` is the day-2 inspection/edit surface.
 
-Important variables:
+Generated files remain projections derived from the canonical config:
 
-- `SLACK_USER_TOKEN`
-- `DEFAULT_CHANNEL_ID`
-- `AGENT_NAME` (public-facing agent name used in prompts; default `Murphy`)
-- `WORKER_CMD`
-- `DEV_REVIEW_CMD`
-- `MAX_CONCURRENT_WORKERS`
-- `RUN_ONCE`
-- `TRIBUNE_MAX_REVIEW_ROUNDS`
-- `DASHBOARD_EXPORT_ENABLED`
+- `.env`
+- `.codex/config.toml`
+- `src/config/claude_mcp.json`
+- `slack-app-manifest.json`
+
+Main runtime defaults still live in `src/config/supervisor_loop.conf`, and the
+supervisor continues to read env + defaults at runtime.
 
 ## Runtime Layout
 
@@ -210,9 +244,15 @@ Task outputs default to ignored runtime directories such as `reports/`, `deliver
 ## Commands
 
 ```bash
-murphy-init --help
-./scripts/run.sh
-RUN_ONCE=true ./scripts/run.sh
+murphy --help
+murphy init
+murphy config show
+murphy config doctor
+murphy start
+murphy start --run-once
+murphy status
+murphy restart
+murphy logs
 python3 -m src.loop.monitor.dashboard
 ./scripts/dashboard.sh
 python3 -m pytest src/loop/tests/test_supervisor_loop.py -v

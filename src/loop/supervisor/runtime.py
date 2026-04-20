@@ -412,6 +412,9 @@ class Supervisor:
         self._agent_user_id = (agent.get("user_id") or "").strip()
 
     def resolve_slack_id(self) -> str:
+        if self.cfg.agent_user_id:
+            self._agent_user_id = self.cfg.agent_user_id
+            return self._agent_user_id
         if self._agent_user_id:
             return self._agent_user_id
         # Try user_directory.json

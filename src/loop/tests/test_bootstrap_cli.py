@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the public Murphy bootstrap CLI."""
+"""Tests for Murphy init/bootstrap flows."""
 
 from __future__ import annotations
 
@@ -8,11 +8,22 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.loop import bootstrap  # noqa: E402
 from src.loop.bootstrap import bootstrap_repo  # noqa: E402
+
+
+def _make_repo_root(root: Path) -> None:
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts/run.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname = 'murphy-test'\n", encoding="utf-8")
+    slack_mcp = root / "mcp/slack-mcp-server/build/slack-mcp-server"
+    slack_mcp.parent.mkdir(parents=True, exist_ok=True)
+    slack_mcp.write_text("", encoding="utf-8")
 
 
 class TestBootstrapRepo(unittest.TestCase):
@@ -28,6 +39,7 @@ class TestBootstrapRepo(unittest.TestCase):
                 chatgpt_project="Test Project",
             )
 
+            self.assertIn(("created", "config.toml"), results)
             self.assertIn(("created", ".env"), results)
             self.assertIn(("created", ".codex/config.toml"), results)
             self.assertIn(("created", "src/config/claude_mcp.json"), results)
@@ -35,8 +47,13 @@ class TestBootstrapRepo(unittest.TestCase):
             self.assertIn(("created", ".agent/memory/memory.md"), results)
             self.assertIn(("created", ".agent/memory/long_term_goals.md"), results)
 
+            canonical_text = (root / "config.toml").read_text(encoding="utf-8")
+            self.assertIn("[slack]", canonical_text)
+            self.assertIn('app_name = "Test Murphy"', canonical_text)
+
             env_text = (root / ".env").read_text(encoding="utf-8")
             self.assertIn("DEFAULT_CHANNEL_ID=C1234567890", env_text)
+            self.assertIn("AGENT_NAME=Murphy", env_text)
 
             codex_text = (root / ".codex/config.toml").read_text(encoding="utf-8")
             self.assertIn('CHATGPT_DEFAULT_PROJECT = "Test Project"', codex_text)
@@ -69,14 +86,13 @@ class TestBootstrapRepo(unittest.TestCase):
             )
             env_text = (root / ".env").read_text(encoding="utf-8")
             self.assertIn("AGENT_NAME=Terry", env_text)
-            self.assertNotIn("# AGENT_NAME=Murphy", env_text)
 
-    def test_default_agent_name_leaves_env_commented(self):
+    def test_default_agent_name_written_into_env(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bootstrap_repo(root, template_root=REPO_ROOT)
             env_text = (root / ".env").read_text(encoding="utf-8")
-            self.assertIn("# AGENT_NAME=Murphy", env_text)
+            self.assertIn("AGENT_NAME=Murphy", env_text)
 
     def test_skips_existing_files_without_force(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -101,6 +117,91 @@ class TestBootstrapRepo(unittest.TestCase):
 
             self.assertIn(("updated", ".env"), results)
             self.assertIn("DEFAULT_CHANNEL_ID=C999", env_path.read_text(encoding="utf-8"))
+
+
+class TestInitCommand(unittest.TestCase):
+    def test_non_interactive_happy_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _make_repo_root(root)
+
+            with patch("src.loop.cli.canonical.shutil.which", return_value="/usr/bin/fake"):
+                rc = bootstrap.main(
+                    [
+                        "--repo-root",
+                        str(root),
+                        "--non-interactive",
+                        "--slack-user-token",
+                        "xoxp-test-token",
+                        "--default-channel-id",
+                        "C123456",
+                        "--slack-app-name",
+                        "Murphy Agent",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            self.assertTrue((root / "config.toml").exists())
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("SLACK_USER_TOKEN=xoxp-test-token", env_text)
+            self.assertIn("DEFAULT_CHANNEL_ID=C123456", env_text)
+
+    def test_single_word_slack_app_name_defaults_agent_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _make_repo_root(root)
+
+            with patch("src.loop.cli.canonical.shutil.which", return_value="/usr/bin/fake"):
+                rc = bootstrap.main(
+                    [
+                        "--repo-root",
+                        str(root),
+                        "--non-interactive",
+                        "--slack-user-token",
+                        "xoxp-test-token",
+                        "--default-channel-id",
+                        "C123456",
+                        "--slack-app-name",
+                        "Terry",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("AGENT_NAME=Terry", env_text)
+
+    def test_interactive_happy_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _make_repo_root(root)
+            answers = [
+                "",  # slack app name
+                "",  # slack app description
+                "",  # agent name
+                "xoxp-interactive",
+                "C777",
+                "",  # explicit agent user id
+                "",  # max workers
+                "",  # chatgpt project
+                "",  # worker model
+                "",  # worker reasoning effort
+                "",  # consult command
+                "",  # consult args
+                "",  # developer-review backend
+                "",  # developer-review command
+                "",  # enable tribune
+                "",  # enable dashboard export
+            ]
+
+            with patch("builtins.input", side_effect=answers), patch(
+                "src.loop.cli.canonical.shutil.which", return_value="/usr/bin/fake"
+            ):
+                rc = bootstrap.main(["--repo-root", str(root)])
+
+            self.assertEqual(rc, 0)
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("SLACK_USER_TOKEN=xoxp-interactive", env_text)
+            self.assertIn("DEFAULT_CHANNEL_ID=C777", env_text)
 
 
 if __name__ == "__main__":
