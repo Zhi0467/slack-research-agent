@@ -736,16 +736,9 @@ def sync_projections(cfg: CanonicalConfig, repo_root: Path, *, force: bool) -> L
 
 
 def _parse_dotenv(path: Path) -> Dict[str, str]:
-    values: Dict[str, str] = {}
     if not path.exists():
-        return values
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
+        return {}
+    return _parse_dotenv_from_text(path.read_text(encoding="utf-8"))
 
 
 def _parse_json_file(path: Path) -> Dict[str, Any]:
@@ -1099,8 +1092,29 @@ def _parse_dotenv_from_text(text: str) -> Dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        values[key.strip()] = _unquote_env_value(value.strip())
     return values
+
+
+def _unquote_env_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        inner = value[1:-1]
+        result: List[str] = []
+        i = 0
+        while i < len(inner):
+            ch = inner[i]
+            if ch == "\\" and i + 1 < len(inner):
+                nxt = inner[i + 1]
+                if nxt in ('"', "\\"):
+                    result.append(nxt)
+                    i += 2
+                    continue
+            result.append(ch)
+            i += 1
+        return "".join(result)
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1]
+    return value
 
 
 def format_projection_results(results: Iterable[ProjectionResult]) -> str:

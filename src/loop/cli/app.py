@@ -188,8 +188,7 @@ def command_config_sync(args: argparse.Namespace) -> int:
         return 1
     results = sync_projections(cfg, repo_root, force=args.force)
     print(format_projection_results(results))
-    skipped = any(result.status == "skipped" for result in results)
-    return 1 if skipped else 0
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

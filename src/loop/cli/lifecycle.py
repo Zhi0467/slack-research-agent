@@ -218,7 +218,8 @@ def command_logs(args: argparse.Namespace) -> int:
         return 1
     lines = log_path.read_text(encoding="utf-8").splitlines()
     tail_count = max(args.tail, 0)
-    for line in lines[-tail_count:]:
+    selected = lines[-tail_count:] if tail_count > 0 else []
+    for line in selected:
         print(line)
     return 0
 

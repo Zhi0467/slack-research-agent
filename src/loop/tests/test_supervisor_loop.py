@@ -2079,8 +2079,10 @@ class TestEnqueueReflectTaskIfDue(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             sup = self._sup(td)
             state = _empty_state()
-            # Last dispatch was 1 hour ago → not due yet (interval is 86400)
-            state["supervisor"]["last_reflect_dispatch_ts"] = f"{int(time.time()) - 3600}.000000"
+            # Last dispatch was today → already ran, should not re-enqueue.
+            # Use current time so the local calendar date matches regardless
+            # of the hour the test runs at.
+            state["supervisor"]["last_reflect_dispatch_ts"] = f"{int(time.time())}.000000"
             sup.save_state(state)
             sup.maintenance.enqueue_if_due()
             new_state = sup.load_state()
