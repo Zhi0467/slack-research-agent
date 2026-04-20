@@ -80,25 +80,51 @@ still resolve the shared MCP binaries correctly.
 you have your own consult server, set it later with `murphy config set` or edit
 `config.toml` and run `murphy config sync`.
 
-Minimal consult setup:
+The intended upstream consult server is
+`https://github.com/murphytheagent/chatgpt-mcp-chrome`.
+
+Minimal setup for that server:
 
 ```bash
-murphy config set consult.command /absolute/path/to/your-consult-server
-murphy config set consult.args arg1,arg2,arg3
+git clone https://github.com/murphytheagent/chatgpt-mcp-chrome.git /path/to/chatgpt-mcp-chrome
+python3 -m pip install -e /path/to/chatgpt-mcp-chrome
+
+bash /path/to/chatgpt-mcp-chrome/scripts/launch_chrome.sh
+# Sign into chatgpt.com in the Chrome window that opens the first time.
+
+murphy config set consult.command chatgpt-mcp-chrome
+murphy config unset consult.args
 murphy config set worker.chatgpt_project Murphy
 murphy config sync --force
 ```
 
-That writes the consult server into `.codex/config.toml` under
-`[mcp_servers.consult]`. The actual args depend on the consult server you are
-running. Today the canonical config models only:
+If `chatgpt-mcp-chrome` is not on your shell `PATH`, use its absolute path
+instead of the bare command name.
+
+For `chatgpt-mcp-chrome`, `consult.args` should normally stay empty. Its
+entrypoint already runs the MCP server on stdio and does not require extra CLI
+flags.
+
+The server defaults to:
+
+- `CHATGPT_CDP_URL=http://127.0.0.1:9222`
+- `CHROME_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+- `CHROME_USER_DATA_DIR=~/Library/Application Support/Google/Chrome-Automation`
+
+Those defaults match Murphy's current public setup on macOS. If you need a
+different Chrome path, profile directory, or CDP port, the current CLI does not
+have first-class keys for those env vars yet.
+
+Murphy writes the consult server into `.codex/config.toml` under
+`[mcp_servers.consult]`. Today the canonical config models only:
 
 - `consult.command`
 - `consult.args`
 - `worker.chatgpt_project` for `[mcp_servers.consult.env].CHATGPT_DEFAULT_PROJECT`
 
-If your consult server needs additional env vars beyond
-`CHATGPT_DEFAULT_PROJECT`, the CLI does not have first-class keys for them yet.
+At runtime Murphy also injects `CONSULT_SLOT_ID`, `CONSULT_TASK_ID`, and
+`CONSULT_HISTORY_DIR` into `[mcp_servers.consult.env]` so the consult server
+can preserve per-task history and parallel-slot isolation.
 
 
 Then:
