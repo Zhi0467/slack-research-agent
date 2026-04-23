@@ -35,6 +35,8 @@ def check_consult_health(
     if not Path(binary_path).is_file():
         return False, f"binary not found: {binary_path}"
 
+    import select
+
     proc: Optional[subprocess.Popen] = None
     try:
         proc = subprocess.Popen(
@@ -43,22 +45,18 @@ def check_consult_health(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            text=True,
+            text=False,  # binary mode for correct select() behavior
         )
-        # Send the initialize request, then close stdin so the server
-        # knows no more input is coming on this stream.
+        # Send the initialize request as bytes, then flush.
         assert proc.stdin is not None
-        proc.stdin.write(_MCP_INIT_REQUEST + "\n")
+        proc.stdin.write((_MCP_INIT_REQUEST + "\n").encode())
         proc.stdin.flush()
 
         # Read stdout line-by-line until we get a valid MCP response.
         # MCP servers are long-lived — they won't exit after initialize,
         # so proc.communicate() would hang until timeout.
-        import select
-
         assert proc.stdout is not None
         deadline = time.monotonic() + timeout_sec
-        buf = ""
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -66,28 +64,26 @@ def check_consult_health(
             ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 1.0))
             if not ready:
                 continue
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                # Process closed stdout — check if it crashed
+            line_bytes = proc.stdout.readline()
+            if not line_bytes:
+                # EOF — process closed stdout, check if it crashed
                 rc = proc.poll()
-                stderr_out = ""
+                stderr_out = b""
                 if proc.stderr:
-                    stderr_out = proc.stderr.read() or ""
-                preview = (stderr_out or buf or "")[:300].strip()
+                    stderr_out = proc.stderr.read() or b""
+                preview = stderr_out.decode(errors="replace")[:300].strip()
                 if rc is not None and rc != 0:
                     return False, f"exit {rc}: {preview}"
                 return False, f"no valid MCP response: {preview}"
-            buf += chunk
-            for line in buf.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if "result" in obj:
-                    return True, ""
+            line = line_bytes.decode(errors="replace").strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "result" in obj:
+                return True, ""
     except FileNotFoundError:
         return False, f"binary not found: {binary_path}"
     except Exception as exc:
@@ -117,8 +113,9 @@ def _cleanup_process(proc: subprocess.Popen) -> None:
 class ConsultHealthCache:
     """Caches consult health results to avoid redundant probes."""
 
-    def __init__(self, cache_ttl_sec: int = 300) -> None:
+    def __init__(self, cache_ttl_sec: int = 300, negative_ttl_sec: int = 60) -> None:
         self._cache_ttl_sec = cache_ttl_sec
+        self._negative_ttl_sec = negative_ttl_sec
         self._healthy: Optional[bool] = None
         self._error: str = ""
         self._checked_at: float = 0.0
@@ -132,10 +129,11 @@ class ConsultHealthCache:
     ) -> Tuple[bool, str]:
         """Return cached result if fresh, otherwise probe and cache."""
         now = time.monotonic()
+        ttl = self._cache_ttl_sec if self._healthy else self._negative_ttl_sec
         if (
             self._healthy is not None
             and binary_path == self._cached_binary_path
-            and (now - self._checked_at) < self._cache_ttl_sec
+            and (now - self._checked_at) < ttl
         ):
             return self._healthy, self._error
 

@@ -2243,9 +2243,7 @@ class Supervisor:
         task.pop("continuation_pending", None)
         task.pop("waiting_reason", None)
         task["consecutive_exit_failures"] = 0
-        for sf in self._SESSION_FIELDS:
-            task.pop(sf, None)
-        task.pop("session_resume_count", None)
+        self._clear_session_state(task)
 
         # Update task JSON: keep originals, add prior context, clear old snapshots
         if mention_text_file:
@@ -2456,9 +2454,7 @@ class Supervisor:
                         task.pop("continuation_pending", None)
                         task.pop("waiting_reason", None)
                         task["consecutive_exit_failures"] = 0
-                        for sf in self._SESSION_FIELDS:
-                            task.pop(sf, None)
-                        task.pop("session_resume_count", None)
+                        self._clear_session_state(task)
                         task["status"] = "in_progress"
                         task["last_update_ts"] = now_val
                         task["last_human_reply_ts"] = u["last_human_reply_ts"]
@@ -2547,18 +2543,14 @@ class Supervisor:
             task["thread_ts"] = task_copy["thread_ts"]
             task["prior_threads"] = task_copy.get("prior_threads", [])
             task.pop("continuation_pending", None)
-            for sf in self._SESSION_FIELDS:
-                task.pop(sf, None)
-            task.pop("session_resume_count", None)
+            self._clear_session_state(task)
             self.save_state(state)
 
         # Update dispatch JSON with new thread_ts
         dispatch["thread_ts"] = task_copy["thread_ts"]
         dispatch["prior_threads"] = task_copy.get("prior_threads", [])
         dispatch.pop("continuation_pending", None)
-        for sf in self._SESSION_FIELDS:
-            dispatch.pop(sf, None)
-        dispatch.pop("session_resume_count", None)
+        self._clear_session_state(dispatch)
         self.atomic_write_json(target_file, dispatch)
 
     def refresh_dispatch_thread_context(self) -> None:
@@ -3417,6 +3409,13 @@ class Supervisor:
         "session_end_ts", "session_dispatch_mode", "dispatch_prompt_hash",
         "session_task_id",
     )
+
+    @staticmethod
+    def _clear_session_state(task: Dict[str, Any]) -> None:
+        """Remove all session resume fields from a task dict."""
+        for sf in Supervisor._SESSION_FIELDS:
+            task.pop(sf, None)
+        task.pop("session_resume_count", None)
 
     def run_worker_once(
         self, disable_resume: bool = False
@@ -5328,11 +5327,15 @@ class Supervisor:
                 self.log_line(
                     f"watchdog_retries_exhausted slot={slot.slot_id} task={task_key}"
                 )
-                self._post_completion_fallback(
-                    ch, ts,
-                    "Task stalled internally and was parked after repeated "
-                    "no-output failures. Re-mention to retry.",
-                )
+                try:
+                    self._post_completion_fallback(
+                        ch, ts,
+                        "Task stalled internally and was parked after repeated "
+                        "no-output failures. Re-mention to retry.",
+                    )
+                except Exception:
+                    # Don't let Slack errors skip slot.reset()
+                    pass
             slot.reset()
             return
 
