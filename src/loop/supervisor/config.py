@@ -84,6 +84,20 @@ class Config:
         self.slack_api_retry_max_sec = float(get("SLACK_API_RETRY_MAX_SEC", "30.0"))
         self.slack_api_timeout_sec = int(get("SLACK_API_TIMEOUT_SEC", "60"))
 
+        # Auto-redispatch budget/backoff
+        self.max_auto_redispatches_per_human_reply = int(
+            get("MAX_AUTO_REDISPATCHES_PER_HUMAN_REPLY", "5")
+        )
+        self.auto_redispatch_backoff_initial_sec = int(
+            get("AUTO_REDISPATCH_BACKOFF_INITIAL_SEC", "120")
+        )
+        self.auto_redispatch_backoff_multiplier = float(
+            get("AUTO_REDISPATCH_BACKOFF_MULTIPLIER", "2.0")
+        )
+        self.auto_redispatch_backoff_max_sec = int(
+            get("AUTO_REDISPATCH_BACKOFF_MAX_SEC", "3600")
+        )
+
         # Loop mode (continuous iteration)
         self.loop_max_duration_sec = int(get("LOOP_MAX_DURATION_SEC", "18000"))
         self.loop_iteration_delay_sec = int(get("LOOP_ITERATION_DELAY_SEC", "180"))
@@ -133,6 +147,13 @@ class Config:
         self.projects_dir = Path(get("PROJECTS_DIR", ".agent/projects"))
         self.consult_history_dir = Path(get("CONSULT_HISTORY_DIR", ".agent/runtime/consult_history"))
         self.jobs_dir = Path(get("JOBS_DIR", ".agent/runtime/jobs"))
+        self.consult_venv_dir = Path(
+            os.path.expanduser(
+                get("CONSULT_VENV_DIR", "~/.local/share/murphy/venvs/chatgpt-mcp-chrome")
+            )
+        )
+        self.consult_health_cache_sec = int(get("CONSULT_HEALTH_CACHE_SEC", "300"))
+        self.consult_health_timeout_sec = int(get("CONSULT_HEALTH_TIMEOUT_SEC", "10"))
 
         # Bounded thread-context packing for worker prompts
         self.thread_context_max_chars = int(get("THREAD_CONTEXT_MAX_CHARS", "200000"))

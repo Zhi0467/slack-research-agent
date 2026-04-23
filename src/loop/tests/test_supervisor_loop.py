@@ -4023,6 +4023,35 @@ class TestWorkerSlot(unittest.TestCase):
             self.assertNotIn(".agent", skip_args)
 
     @patch.object(WorkerSlot, "_git")
+    def test_create_worktree_nukes_orphan_dir_without_git_marker(self, mock_git):
+        """An orphan worktree dir should be removed before recreation."""
+        with tempfile.TemporaryDirectory() as td:
+            slot = self._make_slot(Path(td))
+            (slot.repo_root / ".agent").mkdir()
+            (slot.repo_root / ".codex").mkdir()
+            slot.worktree_path.mkdir(parents=True, exist_ok=True)
+            (slot.worktree_path / "leftover-file").write_text("stale")
+
+            def fake_git(args, cwd, **kw):
+                if args[0] == "worktree" and args[1] == "add":
+                    Path(args[2]).mkdir(parents=True, exist_ok=True)
+                    (Path(args[2]) / ".git").write_text(
+                        f"gitdir: {slot.repo_root}/.git/worktrees/{slot.branch_name}\n"
+                    )
+                return MagicMock(stdout="", returncode=0)
+
+            mock_git.side_effect = fake_git
+
+            slot.setup_worktree()
+
+            self.assertFalse((slot.worktree_path / "leftover-file").exists())
+            calls = [c[0][0] for c in mock_git.call_args_list]
+            add_calls = [c for c in calls if c[:2] == ["worktree", "add"]]
+            self.assertEqual(len(add_calls), 1, f"Expected one worktree add call: {calls}")
+            checkout_calls = [c for c in calls if c[:2] == ["checkout", "-B"]]
+            self.assertEqual(checkout_calls, [], f"Unexpected checkout in orphan dir: {calls}")
+
+    @patch.object(WorkerSlot, "_git")
     def test_subprocess_env_includes_repo_root_and_branch(self, mock_git):
         """_run_subprocess should pass REPO_ROOT and WORKER_BRANCH env vars."""
         with tempfile.TemporaryDirectory() as td:
@@ -5170,7 +5199,7 @@ class TestWatchdogRequeueOrPark(unittest.TestCase):
             }
             sup.save_state(state)
             result = sup._watchdog_requeue_or_park("t1", "mcp_timeout")
-            self.assertTrue(result)
+            self.assertIsNone(result)
             state = sup.load_state()
             self.assertNotIn("t1", state.get("active_tasks", {}))
             self.assertIn("t1", state.get("queued_tasks", {}))
@@ -5191,7 +5220,7 @@ class TestWatchdogRequeueOrPark(unittest.TestCase):
             }
             sup.save_state(state)
             result = sup._watchdog_requeue_or_park("t1", "mcp_timeout")
-            self.assertFalse(result)
+            self.assertEqual(result, ("", ""))
             state = sup.load_state()
             self.assertNotIn("t1", state.get("active_tasks", {}))
             self.assertIn("t1", state.get("incomplete_tasks", {}))
@@ -5205,7 +5234,7 @@ class TestWatchdogRequeueOrPark(unittest.TestCase):
             tmp = Path(td)
             sup = self._make_sup(tmp)
             result = sup._watchdog_requeue_or_park("nonexistent", "test")
-            self.assertFalse(result)
+            self.assertIsNone(result)
 
 
 class TestMaintenanceInFlight(unittest.TestCase):
@@ -9798,7 +9827,7 @@ class TestContinueInNewThread(unittest.TestCase):
             self.assertNotIn("session_prompt_hash", task)
             self.assertNotIn("session_resume_count", task)
 
-    def test_session_fields_preserved_for_thread_length(self):
+    def test_session_fields_cleared_for_thread_length(self):
         with tempfile.TemporaryDirectory() as td:
             sup = self._sup(td)
             _write_agent_identity(sup, "U_AGENT")
@@ -9824,8 +9853,8 @@ class TestContinueInNewThread(unittest.TestCase):
             with patch.object(sup, "slack_api_post", return_value={"ok": True, "ts": "3000.000000"}):
                 sup._continue_in_new_thread(task, "thread_length")
 
-            self.assertEqual(task["codex_session_id"], "sess-456")
-            self.assertEqual(task["session_prompt_hash"], "def")
+            self.assertNotIn("codex_session_id", task)
+            self.assertNotIn("session_prompt_hash", task)
 
     def test_returns_false_on_missing_channel(self):
         with tempfile.TemporaryDirectory() as td:
@@ -10112,6 +10141,833 @@ class TestWaitingReasonSetAndCleared(unittest.TestCase):
             t = state["finished_tasks"].get(task_key)
             self.assertIsNotNone(t)
             self.assertNotIn("waiting_reason", t)
+
+
+class TestWatchdogParkNotice(unittest.TestCase):
+    """Watchdog parking returns collaborator notification coordinates."""
+
+    def _make_sup(self, tmp):
+        sup = _make_supervisor(tmp)
+        _write_agent_identity(sup)
+        return sup
+
+    def test_park_returns_channel_and_thread(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sup = self._make_sup(tmp)
+            state = sup.load_state()
+            state["active_tasks"] = {
+                "t1": {
+                    "status": "in_progress",
+                    "claimed_by": "slot-0",
+                    "watchdog_retries": sup.cfg.max_watchdog_retries,
+                    "channel_id": "C_CHAN",
+                    "thread_ts": "1234.000000",
+                },
+            }
+            sup.save_state(state)
+            result = sup._watchdog_requeue_or_park("t1", "session_log_stale")
+            self.assertEqual(result, ("C_CHAN", "1234.000000"))
+
+    def test_requeue_returns_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sup = self._make_sup(tmp)
+            state = sup.load_state()
+            state["active_tasks"] = {
+                "t1": {
+                    "status": "in_progress",
+                    "claimed_by": "slot-0",
+                    "watchdog_retries": 0,
+                    "channel_id": "C_CHAN",
+                    "thread_ts": "1234.000000",
+                },
+            }
+            sup.save_state(state)
+            result = sup._watchdog_requeue_or_park("t1", "session_log_stale")
+            self.assertIsNone(result)
+
+    def test_missing_task_returns_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sup = self._make_sup(tmp)
+            result = sup._watchdog_requeue_or_park("nonexistent", "test")
+            self.assertIsNone(result)
+
+
+class TestStaleDraftBaseline(unittest.TestCase):
+    """Stale-draft detection should use dispatch baseline, not last agent post."""
+
+    def _make_sup(self, tmp):
+        sup = _make_supervisor(Path(tmp), env_overrides={
+            "TRIBUNE_MAX_REVIEW_ROUNDS": "0",
+        })
+        _write_agent_identity(sup)
+        return sup
+
+    def _setup_reconcile(self, sup, key, dispatch_data=None, captured_slot_id=None):
+        state = _empty_state()
+        task = _make_task(key, "in_progress")
+        task["claimed_by"] = "test-agent-slot-0"
+        state["active_tasks"][key] = task
+        sup.save_state(state)
+
+        outcome_path = sup._outcome_path_for_task(key)
+        outcome_path.parent.mkdir(parents=True, exist_ok=True)
+        outcome_path.write_text(json.dumps({
+            "mention_ts": key,
+            "thread_ts": key,
+            "status": "done",
+            "summary": "Test done",
+            "completion_confidence": "high",
+        }))
+
+        if captured_slot_id is not None:
+            dispatch_file = sup.cfg.dispatch_dir / f"worker-{captured_slot_id}.task.json"
+        else:
+            dispatch_file = sup.cfg.dispatch_task_file
+        dispatch_file.parent.mkdir(parents=True, exist_ok=True)
+        data = dispatch_data or {}
+        data.setdefault("mention_ts", key)
+        data.setdefault("thread_ts", key)
+        data.setdefault("channel_id", "C123")
+        data.setdefault("mention_text_file", "")
+        dispatch_file.write_text(json.dumps(data))
+
+        draft_path = sup.cfg.dispatch_dir / f"slack_draft.{key}.md"
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text("Draft reply")
+        return draft_path
+
+    def test_no_redispatch_when_worker_already_saw_latest_human(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._make_sup(td)
+            key = "1000.000000"
+            thread_msgs = [
+                {"ts": "900.000000", "user": "U_AGENT", "text": "Old wrong post"},
+                {"ts": "950.000000", "user": "U_HUMAN", "text": "Correction"},
+            ]
+            draft_path = self._setup_reconcile(
+                sup, key, dispatch_data={"last_human_reply_ts": "950.000000"},
+            )
+
+            with patch.object(sup, "_fetch_thread_messages", return_value=thread_msgs), \
+                 patch.object(sup, "_store_thread_snapshot"), \
+                 patch.object(sup, "_has_agent_delivery", return_value=True), \
+                 patch.object(sup, "slack_api_post", return_value={"ok": True}):
+                sup.reconcile_task_after_run(key, 0)
+
+            self.assertTrue(draft_path.exists())
+            state = sup.load_state()
+            self.assertIn(key, state.get("finished_tasks", {}))
+
+    def test_redispatch_when_new_human_reply_after_dispatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._make_sup(td)
+            key = "1000.000000"
+            thread_msgs = [
+                {"ts": "900.000000", "user": "U_AGENT", "text": "Agent post"},
+                {"ts": "950.000000", "user": "U_HUMAN", "text": "Original human"},
+                {"ts": "1100.000000", "user": "U_HUMAN", "text": "New reply after dispatch"},
+            ]
+            draft_path = self._setup_reconcile(
+                sup, key, dispatch_data={"last_human_reply_ts": "950.000000"},
+            )
+
+            with patch.object(sup, "_fetch_thread_messages", return_value=thread_msgs), \
+                 patch.object(sup, "_store_thread_snapshot"), \
+                 patch.object(sup, "slack_api_post", return_value={"ok": True}):
+                sup.reconcile_task_after_run(key, 0)
+
+            self.assertFalse(draft_path.exists())
+            state = sup.load_state()
+            self.assertIn(key, state.get("incomplete_tasks", {}))
+
+    def test_fallback_to_agent_ts_when_no_baseline(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._make_sup(td)
+            key = "1000.000000"
+            thread_msgs = [
+                {"ts": "900.000000", "user": "U_HUMAN", "text": "Human ask"},
+                {"ts": "950.000000", "user": "U_AGENT", "text": "Agent reply"},
+            ]
+            draft_path = self._setup_reconcile(sup, key, dispatch_data={})
+
+            with patch.object(sup, "_fetch_thread_messages", return_value=thread_msgs), \
+                 patch.object(sup, "_store_thread_snapshot"), \
+                 patch.object(sup, "_has_agent_delivery", return_value=True), \
+                 patch.object(sup, "slack_api_post", return_value={"ok": True}):
+                sup.reconcile_task_after_run(key, 0)
+
+            self.assertTrue(draft_path.exists())
+            state = sup.load_state()
+            self.assertIn(key, state.get("finished_tasks", {}))
+
+    def test_parallel_path_reads_slot_dispatch_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._make_sup(td)
+            key = "1000.000000"
+            slot_id = 2
+            thread_msgs = [
+                {"ts": "900.000000", "user": "U_AGENT", "text": "Old post"},
+                {"ts": "950.000000", "user": "U_HUMAN", "text": "Correction"},
+            ]
+            draft_path = self._setup_reconcile(
+                sup,
+                key,
+                dispatch_data={"last_human_reply_ts": "950.000000"},
+                captured_slot_id=slot_id,
+            )
+
+            with patch.object(sup, "_fetch_thread_messages", return_value=thread_msgs), \
+                 patch.object(sup, "_store_thread_snapshot"), \
+                 patch.object(sup, "_has_agent_delivery", return_value=True), \
+                 patch.object(sup, "slack_api_post", return_value={"ok": True}):
+                sup.reconcile_task_after_run(key, 0, captured_slot_id=slot_id)
+
+            self.assertTrue(draft_path.exists())
+            state = sup.load_state()
+            self.assertIn(key, state.get("finished_tasks", {}))
+
+
+class TestRefreshDispatchStampsBaseline(unittest.TestCase):
+    """Dispatch refresh should stamp the latest seen human reply."""
+
+    def _sup(self, tmp):
+        sup = _make_supervisor(Path(tmp))
+        _write_agent_identity(sup)
+        return sup
+
+    def test_serial_stamps_last_human_reply_ts(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            key = "1000.000000"
+            mention_text_file = str(sup.task_text_path(key, "active_tasks"))
+            Path(mention_text_file).parent.mkdir(parents=True, exist_ok=True)
+            sup.write_task_json(mention_text_file, {
+                "task_id": key,
+                "thread_ts": key,
+                "channel_id": "C123",
+                "messages": [{"ts": key, "user_id": "U_HUMAN", "role": "human", "text": "Original ask"}],
+            })
+            sup.atomic_write_json(sup.cfg.dispatch_task_file, {
+                "mention_ts": key,
+                "thread_ts": key,
+                "channel_id": "C123",
+                "mention_text_file": mention_text_file,
+                "mention_text": "Original ask",
+            })
+            thread_resp = {
+                "ok": True,
+                "messages": [
+                    {"ts": "1000.000000", "user": "U_AGENT", "text": "Agent reply"},
+                    {"ts": "1001.000000", "user": "U_HUMAN", "text": "New human reply"},
+                    {"ts": "1002.000000", "user": "U_HUMAN", "text": "Another human reply"},
+                ],
+                "has_more": False,
+                "response_metadata": {"next_cursor": ""},
+            }
+            with patch.object(sup, "slack_api_get", return_value=thread_resp):
+                sup.refresh_dispatch_thread_context()
+            updated = json.loads(sup.cfg.dispatch_task_file.read_text())
+            self.assertEqual(updated.get("last_human_reply_ts"), "1002.000000")
+
+    def test_parallel_slot_stamps_last_human_reply_ts(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            key = "1000.000000"
+            mention_text_file = str(sup.task_text_path(key, "active_tasks"))
+            Path(mention_text_file).parent.mkdir(parents=True, exist_ok=True)
+            sup.write_task_json(mention_text_file, {
+                "task_id": key,
+                "thread_ts": key,
+                "channel_id": "C123",
+                "messages": [{"ts": key, "user_id": "U_HUMAN", "role": "human", "text": "Original ask"}],
+            })
+            slot_dispatch = sup.cfg.dispatch_dir / "worker-3.task.json"
+            slot_dispatch.parent.mkdir(parents=True, exist_ok=True)
+            slot_dispatch.write_text(json.dumps({
+                "mention_ts": key,
+                "thread_ts": key,
+                "channel_id": "C123",
+                "mention_text_file": mention_text_file,
+                "mention_text": "Original ask",
+            }))
+
+            class MockSlot:
+                dispatch_task_file = slot_dispatch
+
+            thread_resp = {
+                "ok": True,
+                "messages": [
+                    {"ts": "1000.000000", "user": "U_AGENT", "text": "Agent reply"},
+                    {"ts": "1001.000000", "user": "U_HUMAN", "text": "Human reply"},
+                ],
+                "has_more": False,
+                "response_metadata": {"next_cursor": ""},
+            }
+            with patch.object(sup, "slack_api_get", return_value=thread_resp):
+                sup._refresh_slot_thread_context(MockSlot())
+            updated = json.loads(slot_dispatch.read_text())
+            self.assertEqual(updated.get("last_human_reply_ts"), "1001.000000")
+
+
+class TestWatchdogParkNoticeSlotIntegration(unittest.TestCase):
+    """Slot reconcile should post a collaborator-visible notice on final park."""
+
+    def _make_sup(self, tmp):
+        sup = _make_supervisor(tmp)
+        _write_agent_identity(sup)
+        return sup
+
+    def test_reconcile_slot_posts_notice_on_watchdog_parking(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            sup = self._make_sup(tmp)
+            task_key = "1000.000000"
+            state = _empty_state()
+            task = _make_task(task_key, "in_progress")
+            task["claimed_by"] = "test-agent-slot-0"
+            task["watchdog_retries"] = sup.cfg.max_watchdog_retries
+            task["channel_id"] = "C_CHAN"
+            task["thread_ts"] = "1000.000000"
+            state["active_tasks"][task_key] = task
+            sup.save_state(state)
+
+            class MockSlot:
+                slot_id = 0
+                task_key = "1000.000000"
+                killed_reason = "session_log_stale"
+                dispatch_task_file = sup.cfg.dispatch_dir / "worker-0.task.json"
+                session_log_file = sup.cfg.dispatch_dir / "worker-0.session.log"
+
+                def collect(self):
+                    return (1, str(self.session_log_file))
+
+                def reset(self):
+                    pass
+
+            MockSlot.dispatch_task_file.parent.mkdir(parents=True, exist_ok=True)
+            MockSlot.dispatch_task_file.write_text("{}")
+            MockSlot.session_log_file.write_text("")
+
+            with patch.object(sup, "_post_completion_fallback") as mock_fallback:
+                sup._reconcile_slot(MockSlot(), sup.cfg.state_file.parent.parent.parent)
+
+            mock_fallback.assert_called_once()
+            args = mock_fallback.call_args[0]
+            self.assertEqual(args[0], "C_CHAN")
+            self.assertEqual(args[1], "1000.000000")
+            self.assertIn("parked", args[2])
+
+
+class TestAutoRedispatchBudget(unittest.TestCase):
+    """Per-human-reply auto-redispatch budget."""
+
+    def _sup(self, tmp, max_redispatches=2):
+        return _make_supervisor(
+            Path(tmp),
+            env_overrides={"MAX_AUTO_REDISPATCHES_PER_HUMAN_REPLY": str(max_redispatches)},
+        )
+
+    def test_budget_exhaustion_parks_task(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td, max_redispatches=2)
+            state = _empty_state()
+            state["incomplete_tasks"]["1.0"] = _make_task("1.0", "in_progress")
+            sup.save_state(state)
+
+            with patch.object(sup, "_post_completion_fallback"), \
+                 patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                for _ in range(2):
+                    result = sup.select_and_claim()
+                    self.assertIsNotNone(result)
+                    st = sup.load_state()
+                    t = st["active_tasks"].pop("1.0")
+                    t["status"] = "in_progress"
+                    t["claimed_by"] = None
+                    st["incomplete_tasks"]["1.0"] = t
+                    sup.save_state(st)
+
+                result = sup.select_and_claim()
+                self.assertIsNone(result)
+
+            st = sup.load_state()
+            parked = st["incomplete_tasks"]["1.0"]
+            self.assertEqual(parked["status"], "waiting_human")
+            self.assertEqual(parked["waiting_reason"], "auto_redispatch_budget_exhausted")
+            self.assertEqual(parked["auto_redispatch_count"], 3)
+
+    def test_budget_reset_on_human_reply(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td, max_redispatches=2)
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_count"] = 2
+            task["auto_redispatch_baseline_ts"] = "100.000000"
+            task["last_human_reply_ts"] = "200.000000"
+            state["incomplete_tasks"]["1.0"] = task
+            sup.save_state(state)
+
+            result = sup.select_and_claim()
+            self.assertIsNotNone(result)
+            st = sup.load_state()
+            claimed = st["active_tasks"]["1.0"]
+            self.assertEqual(claimed["auto_redispatch_count"], 0)
+            self.assertEqual(claimed["auto_redispatch_baseline_ts"], "200.000000")
+
+    def test_budget_fields_preserved_in_normalize(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_count"] = 3
+            task["auto_redispatch_baseline_ts"] = "100.000000"
+            task["last_human_reply_ts"] = "200.000000"
+            normalized = sup.normalize_task(task, "1.0")
+            self.assertEqual(normalized["auto_redispatch_count"], 3)
+            self.assertEqual(normalized["auto_redispatch_baseline_ts"], "100.000000")
+            self.assertEqual(normalized["last_human_reply_ts"], "200.000000")
+
+    def test_budget_fields_in_dispatch_internal_fields(self):
+        internal = sl.Supervisor._DISPATCH_INTERNAL_FIELDS
+        self.assertIn("auto_redispatch_count", internal)
+        self.assertIn("auto_redispatch_baseline_ts", internal)
+        self.assertIn("last_human_reply_ts", internal)
+
+    def test_last_human_reply_ts_stamped_in_reconcile(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            _write_agent_identity(sup)
+            state = _empty_state()
+            state["active_tasks"]["1.0"] = _make_task("1.0", "in_progress")
+            sup.save_state(state)
+            outcome_path = sup._outcome_path_for_task("1.0")
+            outcome_path.parent.mkdir(parents=True, exist_ok=True)
+            outcome_path.write_text(json.dumps({
+                "mention_ts": "1.0",
+                "thread_ts": "1.0",
+                "status": "in_progress",
+                "summary": "still working",
+            }))
+            sup.cfg.dispatch_task_file.parent.mkdir(parents=True, exist_ok=True)
+            sup.cfg.dispatch_task_file.write_text(json.dumps({"last_human_reply_ts": "500.000000"}))
+            with patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                sup.reconcile_task_after_run("1.0", 0)
+            task = sup.load_state()["incomplete_tasks"]["1.0"]
+            self.assertEqual(task.get("last_human_reply_ts"), "500.000000")
+
+    def test_reopen_from_finished_clears_auto_redispatch_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            _write_agent_identity(sup, "U_AGENT")
+            state = _empty_state()
+            old_task = _make_task("100.000000", "done")
+            old_task["auto_redispatch_count"] = 4
+            old_task["auto_redispatch_baseline_ts"] = "100.000000"
+            old_task["auto_redispatch_next_after"] = str(time.time() + 999)
+            old_task["last_human_reply_ts"] = "100.000000"
+            state["finished_tasks"]["100.000000"] = old_task
+            sup.save_state(state)
+            new_mention = {
+                "ts": "200.000000",
+                "text": "@agent please continue",
+                "user": "U_HUMAN",
+                "username": "U_HUMAN",
+                "permalink": "https://example.slack.com/archives/C123/p200000000",
+                "channel": {"id": "C123"},
+                "thread_ts": "100.000000",
+            }
+            slack_resp = {
+                "ok": True,
+                "messages": {"matches": [new_mention], "pagination": {"page": 1, "page_count": 1}},
+            }
+            with patch.object(sup, "slack_api_get", return_value=slack_resp):
+                sup.poll_mentions_and_enqueue()
+            reopened = sup.load_state()["queued_tasks"].get("100.000000")
+            self.assertIsNotNone(reopened)
+            self.assertNotIn("auto_redispatch_count", reopened)
+            self.assertNotIn("auto_redispatch_baseline_ts", reopened)
+            self.assertNotIn("auto_redispatch_next_after", reopened)
+            self.assertNotIn("last_human_reply_ts", reopened)
+
+
+class TestAutoRedispatchBackoff(unittest.TestCase):
+    """Exponential cooldown between clean auto-redispatches."""
+
+    def _sup(self, tmp):
+        return _make_supervisor(
+            Path(tmp),
+            env_overrides={
+                "MAX_AUTO_REDISPATCHES_PER_HUMAN_REPLY": "2",
+                "AUTO_REDISPATCH_BACKOFF_INITIAL_SEC": "10",
+                "AUTO_REDISPATCH_BACKOFF_MULTIPLIER": "2.0",
+                "AUTO_REDISPATCH_BACKOFF_MAX_SEC": "500",
+            },
+        )
+
+    def _write_outcome(self, sup, key, status):
+        outcome_path = sup._outcome_path_for_task(key)
+        outcome_path.parent.mkdir(parents=True, exist_ok=True)
+        outcome_path.write_text(json.dumps({
+            "mention_ts": key,
+            "thread_ts": key,
+            "status": status,
+            "summary": "test",
+        }))
+
+    def _write_dispatch(self, sup, last_human_ts="0"):
+        sup.cfg.dispatch_task_file.parent.mkdir(parents=True, exist_ok=True)
+        sup.cfg.dispatch_task_file.write_text(
+            json.dumps({"last_human_reply_ts": last_human_ts})
+        )
+
+    def test_stamps_cooldown_on_clean_in_progress(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            _write_agent_identity(sup)
+            state = _empty_state()
+            state["active_tasks"]["1.0"] = _make_task("1.0", "in_progress")
+            sup.save_state(state)
+            self._write_outcome(sup, "1.0", "in_progress")
+            self._write_dispatch(sup)
+            t0 = time.time()
+            with patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                sup.reconcile_task_after_run("1.0", 0)
+            t = sup.load_state()["incomplete_tasks"]["1.0"]
+            stamped = float(t["auto_redispatch_next_after"])
+            self.assertGreaterEqual(stamped, t0 + 5)
+            self.assertLessEqual(stamped, t0 + 20)
+
+    def test_cooldown_grows_exponentially(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            for count, expected in [(0, 10), (1, 20), (2, 40)]:
+                state = _empty_state()
+                task = _make_task("1.0", "in_progress")
+                task["auto_redispatch_count"] = count
+                state["active_tasks"]["1.0"] = task
+                sup.save_state(state)
+                self._write_outcome(sup, "1.0", "in_progress")
+                self._write_dispatch(sup)
+                t0 = time.time()
+                with patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                    sup.reconcile_task_after_run("1.0", 0)
+                actual = float(sup.load_state()["incomplete_tasks"]["1.0"]["auto_redispatch_next_after"]) - t0
+                self.assertGreaterEqual(actual, expected - 5)
+                self.assertLessEqual(actual, expected + 5)
+
+    def test_cooldown_capped_at_max(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_count"] = 20
+            state["active_tasks"]["1.0"] = task
+            sup.save_state(state)
+            self._write_outcome(sup, "1.0", "in_progress")
+            self._write_dispatch(sup)
+            t0 = time.time()
+            with patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                sup.reconcile_task_after_run("1.0", 0)
+            stamped = float(sup.load_state()["incomplete_tasks"]["1.0"]["auto_redispatch_next_after"])
+            self.assertLessEqual(stamped, t0 + 505)
+            self.assertGreaterEqual(stamped, t0 + 495)
+
+    def test_skips_selection_during_cooldown(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_next_after"] = str(time.time() + 1000)
+            state["incomplete_tasks"]["1.0"] = task
+            sup.save_state(state)
+            self.assertIsNone(sup.select_and_claim())
+
+    def test_newer_human_reply_bypasses_cooldown(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_next_after"] = str(time.time() + 1000)
+            task["auto_redispatch_baseline_ts"] = "100.000000"
+            task["last_human_reply_ts"] = "200.000000"
+            state["incomplete_tasks"]["1.0"] = task
+            sup.save_state(state)
+            self.assertIsNotNone(sup.select_and_claim())
+
+    def test_has_dispatchable_honors_cooldown(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["auto_redispatch_next_after"] = str(time.time() + 1000)
+            state["incomplete_tasks"]["1.0"] = task
+            sup.save_state(state)
+            self.assertFalse(sup._has_dispatchable_tasks())
+            state = sup.load_state()
+            state["incomplete_tasks"]["1.0"]["last_human_reply_ts"] = "9999.0"
+            state["incomplete_tasks"]["1.0"]["auto_redispatch_baseline_ts"] = "1.0"
+            sup.save_state(state)
+            self.assertTrue(sup._has_dispatchable_tasks())
+
+    def test_peek_skips_cooled_down_for_serial(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            state = _empty_state()
+            cool = _make_task("1.0", "in_progress")
+            cool["auto_redispatch_next_after"] = str(time.time() + 1000)
+            cool["created_ts"] = "1.0"
+            state["incomplete_tasks"]["1.0"] = cool
+            maint = _make_task("2.0", "queued", task_type="maintenance", maintenance_phase=0)
+            maint["created_ts"] = "2.0"
+            state["queued_tasks"]["2.0"] = maint
+            sup.save_state(state)
+            self.assertTrue(sup._peek_next_is_maintenance())
+
+    def test_refresh_updates_last_human_reply_ts_on_cooling_task(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            _write_agent_identity(sup, "U_AGENT")
+            state = _empty_state()
+            task = _make_task("1.0", "in_progress")
+            task["channel_id"] = "C123"
+            task["thread_ts"] = "1.0"
+            task["auto_redispatch_next_after"] = str(time.time() + 1000)
+            task["auto_redispatch_baseline_ts"] = "100.000000"
+            task["last_human_reply_ts"] = "100.000000"
+            state["incomplete_tasks"]["1.0"] = task
+            sup.save_state(state)
+            thread_msgs = [
+                {"ts": "100.000000", "user": "U_HUMAN", "text": "initial"},
+                {"ts": "150.000000", "user": "U_AGENT", "text": "agent reply"},
+                {"ts": "200.000000", "user": "U_HUMAN", "text": "follow-up during cooldown"},
+            ]
+            with patch.object(sup, "_fetch_thread_messages", return_value=thread_msgs), \
+                 patch.object(sup, "_store_thread_snapshot"):
+                sup.refresh_waiting_human_tasks()
+            t = sup.load_state()["incomplete_tasks"]["1.0"]
+            self.assertEqual(t["last_human_reply_ts"], "200.000000")
+            self.assertEqual(t["status"], "in_progress")
+            self.assertIsNotNone(sup.select_and_claim())
+
+    def test_first_reconcile_initializes_baseline_ts(self):
+        with tempfile.TemporaryDirectory() as td:
+            sup = self._sup(td)
+            _write_agent_identity(sup)
+            state = _empty_state()
+            state["active_tasks"]["1.0"] = _make_task("1.0", "in_progress")
+            sup.save_state(state)
+            self._write_outcome(sup, "1.0", "in_progress")
+            self._write_dispatch(sup, last_human_ts="500.000000")
+            with patch.object(sup, "_fetch_thread_messages", return_value=[]):
+                sup.reconcile_task_after_run("1.0", 0)
+            t = sup.load_state()["incomplete_tasks"]["1.0"]
+            self.assertEqual(t["last_human_reply_ts"], "500.000000")
+            self.assertEqual(t["auto_redispatch_baseline_ts"], "500.000000")
+
+
+class TestConsultHealth(unittest.TestCase):
+    """Consult health probe and cache."""
+
+    def test_check_healthy_binary(self):
+        from src.loop.supervisor.consult_health import check_consult_health
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                'import sys, json\n'
+                'sys.stdin.readline()\n'
+                'print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test"}}}))\n'
+            )
+            script_path = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+            f.write(f"#!/bin/sh\nexec python3 {script_path}\n")
+            binary_path = f.name
+        os.chmod(binary_path, 0o755)
+
+        try:
+            healthy, error = check_consult_health(binary_path, timeout_sec=5)
+            self.assertTrue(healthy, error)
+            self.assertEqual(error, "")
+        finally:
+            os.unlink(script_path)
+            os.unlink(binary_path)
+
+    def test_check_unhealthy_missing_binary(self):
+        from src.loop.supervisor.consult_health import check_consult_health
+
+        healthy, error = check_consult_health("/nonexistent/binary", timeout_sec=2)
+        self.assertFalse(healthy)
+        self.assertIn("not found", error)
+
+    def test_check_unhealthy_crash(self):
+        from src.loop.supervisor.consult_health import check_consult_health
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+            f.write("#!/bin/sh\necho 'ImportError: broken' >&2\nexit 1\n")
+            binary_path = f.name
+        os.chmod(binary_path, 0o755)
+
+        try:
+            healthy, error = check_consult_health(binary_path, timeout_sec=5)
+            self.assertFalse(healthy)
+            self.assertIn("exit 1", error)
+        finally:
+            os.unlink(binary_path)
+
+    def test_check_unhealthy_timeout(self):
+        from src.loop.supervisor.consult_health import check_consult_health
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+            f.write("#!/bin/sh\nsleep 60\n")
+            binary_path = f.name
+        os.chmod(binary_path, 0o755)
+
+        try:
+            healthy, error = check_consult_health(binary_path, timeout_sec=1)
+            self.assertFalse(healthy)
+            self.assertIn("timeout", error)
+        finally:
+            os.unlink(binary_path)
+
+    def test_cache_returns_cached_result(self):
+        from src.loop.supervisor.consult_health import ConsultHealthCache
+
+        cache = ConsultHealthCache(cache_ttl_sec=300)
+        cache._healthy = True
+        cache._error = ""
+        cache._checked_at = time.monotonic()
+        cache._cached_binary_path = "/nonexistent/binary"
+        healthy, error = cache.check("/nonexistent/binary", timeout_sec=1)
+        self.assertTrue(healthy)
+        self.assertEqual(error, "")
+
+    def test_cache_expires_and_reprobes(self):
+        from src.loop.supervisor.consult_health import ConsultHealthCache
+
+        cache = ConsultHealthCache(cache_ttl_sec=0)
+        cache._healthy = True
+        cache._error = ""
+        cache._checked_at = time.monotonic() - 1
+        healthy, error = cache.check("/nonexistent/binary", timeout_sec=1)
+        self.assertFalse(healthy)
+        self.assertIn("not found", error)
+
+
+class TestConsultConfigStripping(unittest.TestCase):
+    """Worker-slot consult config rewriting and stripping."""
+
+    def _make_config(self, content: str) -> Path:
+        d = Path(tempfile.mkdtemp())
+        codex = d / ".codex"
+        codex.mkdir()
+        (codex / "config.toml").write_text(content, encoding="utf-8")
+        return d
+
+    def test_disable_consult_mcp_strips_all_sections(self):
+        from src.loop.supervisor.worker_slot import WorkerSlot
+
+        wt = self._make_config(
+            '[mcp_servers.consult]\n'
+            'command = "/old/path/bin/chatgpt-mcp-chrome"\n'
+            'args = []\n'
+            '\n'
+            '[mcp_servers.consult.env]\n'
+            'PYTHONPATH = "/some/path"\n'
+            '\n'
+            '[mcp_servers.slack]\n'
+            'command = "/slack/binary"\n'
+        )
+        try:
+            slot = WorkerSlot.__new__(WorkerSlot)
+            slot.worktree_path = wt
+            slot.disable_consult_mcp()
+            result = (wt / ".codex" / "config.toml").read_text()
+            self.assertNotIn("[mcp_servers.consult]", result)
+            self.assertNotIn("[mcp_servers.consult.env]", result)
+            self.assertIn("[mcp_servers.slack]", result)
+        finally:
+            shutil.rmtree(str(wt))
+
+    def test_rewrite_consult_binary_path(self):
+        from src.loop.supervisor.worker_slot import WorkerSlot
+
+        wt = self._make_config(
+            '[mcp_servers.consult]\n'
+            'command = "/old/path/bin/chatgpt-mcp-chrome"\n'
+            'args = []\n'
+            '\n'
+            '[mcp_servers.consult.env]\n'
+            'PYTHONPATH = "/some/path"\n'
+        )
+        try:
+            slot = WorkerSlot.__new__(WorkerSlot)
+            slot.worktree_path = wt
+            new_path = "/new/venv/bin/chatgpt-mcp-chrome"
+            slot.rewrite_consult_binary_path(new_path)
+            result = (wt / ".codex" / "config.toml").read_text()
+            self.assertIn(f'command = "{new_path}"', result)
+            self.assertNotIn("/old/path", result)
+        finally:
+            shutil.rmtree(str(wt))
+
+    def test_rewrite_does_not_affect_other_servers(self):
+        from src.loop.supervisor.worker_slot import WorkerSlot
+
+        wt = self._make_config(
+            '[mcp_servers.slack]\n'
+            'command = "/slack/binary"\n'
+            '\n'
+            '[mcp_servers.consult]\n'
+            'command = "/old/path/bin/chatgpt-mcp-chrome"\n'
+            'args = []\n'
+        )
+        try:
+            slot = WorkerSlot.__new__(WorkerSlot)
+            slot.worktree_path = wt
+            new_path = "/new/venv/bin/chatgpt-mcp-chrome"
+            slot.rewrite_consult_binary_path(new_path)
+            result = (wt / ".codex" / "config.toml").read_text()
+            self.assertIn(f'command = "{new_path}"', result)
+            self.assertIn('command = "/slack/binary"', result)
+        finally:
+            shutil.rmtree(str(wt))
+
+    def test_disable_preserves_similar_named_servers(self):
+        from src.loop.supervisor.worker_slot import WorkerSlot
+
+        wt = self._make_config(
+            '[mcp_servers.consultant]\n'
+            'command = "/consultant/binary"\n'
+            '\n'
+            '[mcp_servers.consult]\n'
+            'command = "/consult/binary"\n'
+            '\n'
+            '[mcp_servers.consult.env]\n'
+            'KEY = "val"\n'
+        )
+        try:
+            slot = WorkerSlot.__new__(WorkerSlot)
+            slot.worktree_path = wt
+            slot.disable_consult_mcp()
+            result = (wt / ".codex" / "config.toml").read_text()
+            self.assertNotIn("[mcp_servers.consult]", result)
+            self.assertNotIn("[mcp_servers.consult.env]", result)
+            self.assertIn("[mcp_servers.consultant]", result)
+        finally:
+            shutil.rmtree(str(wt))
+
+    def test_disable_when_no_consult_section(self):
+        from src.loop.supervisor.worker_slot import WorkerSlot
+
+        wt = self._make_config('[mcp_servers.slack]\ncommand = "/slack/binary"\n')
+        try:
+            slot = WorkerSlot.__new__(WorkerSlot)
+            slot.worktree_path = wt
+            slot.disable_consult_mcp()
+            result = (wt / ".codex" / "config.toml").read_text()
+            self.assertIn("[mcp_servers.slack]", result)
+        finally:
+            shutil.rmtree(str(wt))
 
 
 if __name__ == "__main__":

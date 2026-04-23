@@ -108,11 +108,20 @@ class WorkerSlot:
         self._git(["worktree", "prune"], cwd=self.repo_root)
 
         if self.worktree_path.exists():
-            # Worktree already exists (e.g. from a prior crash), just reset it.
-            # Use _reset_worktree_impl to avoid mutual recursion.
-            self._reset_worktree_impl()
-            self._ensure_symlinks()
-            return
+            if not (self.worktree_path / ".git").exists():
+                import shutil
+
+                self._log(
+                    f"worktree_orphan_dir_nuked slot={self.slot_id} "
+                    f"path={self.worktree_path}"
+                )
+                shutil.rmtree(self.worktree_path, ignore_errors=True)
+            else:
+                # Worktree already exists (e.g. from a prior crash), just reset it.
+                # Use _reset_worktree_impl to avoid mutual recursion.
+                self._reset_worktree_impl()
+                self._ensure_symlinks()
+                return
 
         self.worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -428,6 +437,51 @@ class WorkerSlot:
             else:
                 text = text.replace(marker, f"{marker}\n{line}")
         config_path.write_text(text, encoding="utf-8")
+
+    def rewrite_consult_binary_path(self, binary_path: str) -> None:
+        """Rewrite the consult MCP command in the copied config.toml."""
+        config_path = self.worktree_path / ".codex" / "config.toml"
+        if not config_path.exists():
+            return
+        lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        in_consult = False
+        rewritten = False
+        out: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_consult = stripped == "[mcp_servers.consult]"
+            if in_consult and not rewritten and re.match(r'^command\s*=\s*"', stripped):
+                out.append(
+                    re.sub(
+                        r'^(command\s*=\s*)"[^"]*"',
+                        rf'\1"{binary_path}"',
+                        line,
+                    )
+                )
+                rewritten = True
+            else:
+                out.append(line)
+        config_path.write_text("".join(out), encoding="utf-8")
+
+    def disable_consult_mcp(self) -> None:
+        """Remove the entire consult MCP section from the copied config."""
+        config_path = self.worktree_path / ".codex" / "config.toml"
+        if not config_path.exists():
+            return
+        lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        out: list[str] = []
+        in_consult = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_consult = (
+                    stripped == "[mcp_servers.consult]"
+                    or stripped.startswith("[mcp_servers.consult.")
+                )
+            if not in_consult:
+                out.append(line)
+        config_path.write_text("".join(out), encoding="utf-8")
 
     # ---- Subprocess dispatch ----
 
@@ -778,4 +832,3 @@ class WorkerSlot:
             return branch
         except Exception:
             return "main"
-
