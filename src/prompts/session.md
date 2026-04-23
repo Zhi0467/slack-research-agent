@@ -39,6 +39,8 @@ The original request and any follow-up conversation are below. Read the full thr
 
 {{LOOP_CONTEXT}}
 
+{{CONSULT_STATUS}}
+
 ## Memory
 Session memory bootstrap (auto-loaded at prompt render time): Long-term goals and daily episodic memory are pointer-only in initial context to keep prompts compact. Use `scripts/memory_recall "<query>"` for citation-backed recall across memory + reports.
 

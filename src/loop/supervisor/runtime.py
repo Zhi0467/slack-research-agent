@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .config import Config
+from .consult_health import ConsultHealthCache
 from .filelock import agent_file_lock
 from .job_store import AckRequest, JobStore
 from .maintenance import MaintenanceManager
@@ -150,6 +151,8 @@ class Supervisor:
         self._last_poll_ts: float = 0.0
         self._last_waiting_refresh_ts: float = 0.0
         self._parallel_slots: list = []
+        self._consult_health = ConsultHealthCache(cfg.consult_health_cache_sec)
+        self._consult_healthy: bool = True
         self._install_signal_handlers()
 
         self.slack_token = self.resolve_slack_token()
@@ -164,6 +167,27 @@ class Supervisor:
         self.cfg.outcomes_dir.mkdir(parents=True, exist_ok=True)
         for dir_name in self.TASK_BUCKET_DIRS.values():
             (self.cfg.tasks_dir / dir_name).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def _consult_binary_path(self) -> str:
+        """Resolved path to the consult MCP server binary."""
+        venv_binary = self.cfg.consult_venv_dir / "bin" / "chatgpt-mcp-chrome"
+        if venv_binary.is_file():
+            return str(venv_binary)
+        return ""
+
+    def _check_consult_health(self) -> Tuple[bool, str]:
+        """Check consult MCP server health with caching."""
+        binary = self._consult_binary_path
+        if not binary:
+            return True, ""
+        consult_src = str(self.cfg.repo_root / "mcp" / "chatgpt-mcp-chrome")
+        env = {**os.environ, "PYTHONPATH": consult_src}
+        return self._consult_health.check(
+            binary,
+            timeout_sec=self.cfg.consult_health_timeout_sec,
+            env=env,
+        )
 
     def _waiting_refresh_due(self, now: float | None = None) -> bool:
         """Return True when waiting-human refresh should run.
@@ -630,6 +654,10 @@ class Supervisor:
         # AGENT-057: thread continuation internal fields
         "continuation_pending",   # flag consumed at dispatch time
         "waiting_reason",         # why task is waiting_human
+        "auto_redispatch_count",        # dispatches since last human reply
+        "auto_redispatch_baseline_ts",  # human reply ts when counter was last reset
+        "last_human_reply_ts",          # latest human reply ts seen at dispatch
+        "auto_redispatch_next_after",   # earliest epoch sec to auto-reclaim
     })
 
     def _render_thread_context(self, mention_text_file: str) -> tuple:
@@ -978,6 +1006,10 @@ class Supervisor:
             **({"prior_threads": task["prior_threads"]} if "prior_threads" in task else {}),
             **({"continuation_pending": task["continuation_pending"]} if "continuation_pending" in task else {}),
             **({"waiting_reason": task["waiting_reason"]} if "waiting_reason" in task else {}),
+            **({"auto_redispatch_count": task["auto_redispatch_count"]} if "auto_redispatch_count" in task else {}),
+            **({"auto_redispatch_baseline_ts": task["auto_redispatch_baseline_ts"]} if "auto_redispatch_baseline_ts" in task else {}),
+            **({"last_human_reply_ts": task["last_human_reply_ts"]} if "last_human_reply_ts" in task else {}),
+            **({"auto_redispatch_next_after": task["auto_redispatch_next_after"]} if "auto_redispatch_next_after" in task else {}),
         }
         if self.maintenance.is_maintenance_task(task_type):
             out["maintenance_phase"] = self.maintenance.get_phase(task)
@@ -1707,6 +1739,10 @@ class Supervisor:
                         destination_bucket = "queued_tasks"
                         task["status"] = "queued"
                         task["claimed_by"] = None
+                        task.pop("auto_redispatch_count", None)
+                        task.pop("auto_redispatch_baseline_ts", None)
+                        task.pop("auto_redispatch_next_after", None)
+                        task.pop("last_human_reply_ts", None)
                         reopen_count += 1
 
                     for bucket_name in ("active_tasks", "queued_tasks", "incomplete_tasks", "finished_tasks"):
@@ -2207,10 +2243,9 @@ class Supervisor:
         task.pop("continuation_pending", None)
         task.pop("waiting_reason", None)
         task["consecutive_exit_failures"] = 0
-        if reason == "parked":
-            for sf in self._SESSION_FIELDS:
-                task.pop(sf, None)
-            task.pop("session_resume_count", None)
+        for sf in self._SESSION_FIELDS:
+            task.pop(sf, None)
+        task.pop("session_resume_count", None)
 
         # Update task JSON: keep originals, add prior context, clear old snapshots
         if mention_text_file:
@@ -2256,10 +2291,16 @@ class Supervisor:
         with self.state_lock():
             state = self.load_state()
             waiting = []
+            now_epoch = time.time()
             for key, task in (state.get("incomplete_tasks") or {}).items():
                 if not isinstance(task, dict):
                     continue
-                if str(task.get("status") or "") != "waiting_human":
+                status_val = str(task.get("status") or "")
+                cooling_down = (
+                    status_val != "waiting_human"
+                    and float(task.get("auto_redispatch_next_after") or "0") > now_epoch
+                )
+                if status_val != "waiting_human" and not cooling_down:
                     continue
                 task_type = str(task.get("task_type") or "slack_mention")
                 # Re-check maintenance threads the same way as mention threads:
@@ -2504,12 +2545,18 @@ class Supervisor:
             task["thread_ts"] = task_copy["thread_ts"]
             task["prior_threads"] = task_copy.get("prior_threads", [])
             task.pop("continuation_pending", None)
+            for sf in self._SESSION_FIELDS:
+                task.pop(sf, None)
+            task.pop("session_resume_count", None)
             self.save_state(state)
 
         # Update dispatch JSON with new thread_ts
         dispatch["thread_ts"] = task_copy["thread_ts"]
         dispatch["prior_threads"] = task_copy.get("prior_threads", [])
         dispatch.pop("continuation_pending", None)
+        for sf in self._SESSION_FIELDS:
+            dispatch.pop(sf, None)
+        dispatch.pop("session_resume_count", None)
         self.atomic_write_json(target_file, dispatch)
 
     def refresh_dispatch_thread_context(self) -> None:
@@ -2536,6 +2583,16 @@ class Supervisor:
 
         self._store_thread_snapshot(mention_text_file, thread_msgs)
         dispatch["mention_text"] = self.read_task_text_for_prompt(mention_text_file)
+        slack_id = self.resolve_slack_id()
+        if slack_id:
+            last_human_ts = "0"
+            for m in thread_msgs:
+                user = m.get("user") or ""
+                if user and user != slack_id:
+                    msg_ts = m.get("ts") or "0"
+                    if ts_gt(msg_ts, last_human_ts):
+                        last_human_ts = msg_ts
+            dispatch["last_human_reply_ts"] = last_human_ts
         self.atomic_write_json(self.cfg.dispatch_task_file, dispatch)
 
     @staticmethod
@@ -2552,6 +2609,17 @@ class Supervisor:
 
         return sorted(items, key=key_fn)[0]
 
+    @staticmethod
+    def _passes_auto_redispatch_cooldown(task: Dict[str, Any], now_epoch: float) -> bool:
+        """Return True when the auto-redispatch cooldown has elapsed."""
+        next_after = float((task or {}).get("auto_redispatch_next_after") or "0")
+        if next_after <= now_epoch:
+            return True
+        return ts_gt(
+            str((task or {}).get("last_human_reply_ts") or "0"),
+            str((task or {}).get("auto_redispatch_baseline_ts") or "0"),
+        )
+
     def select_and_claim(
         self, worker_slot: int = 0, dispatch_task_file: Path | None = None
     ) -> Optional[Tuple[str, str]]:
@@ -2566,6 +2634,8 @@ class Supervisor:
         """
         now_val = now_ts()
         target_file = dispatch_task_file or self.cfg.dispatch_task_file
+
+        _budget_parked: Optional[Dict[str, str]] = None
 
         with self.state_lock():
             state = self.load_state()
@@ -2593,6 +2663,7 @@ class Supervisor:
                     for k, v in (state.get("incomplete_tasks") or {}).items()
                     if str((v or {}).get("status") or "in_progress") != "waiting_human"
                     and float((v or {}).get("loop_next_dispatch_after") or "0") <= now_epoch
+                    and self._passes_auto_redispatch_cooldown(v, now_epoch)
                 }
                 if incomplete:
                     sel = self._by_oldest(incomplete)
@@ -2623,29 +2694,90 @@ class Supervisor:
             if not isinstance(task, dict):
                 return None
 
-            claimed = self.normalize_task(task, selected_key, bucket_name="active_tasks")
-            self.ensure_task_text_file(
-                claimed,
-                bucket_name="active_tasks",
-                legacy_text=str(task.get("mention_text") or ""),
-            )
-            claimed["status"] = "in_progress"
-            claimed["claimed_by"] = f"{self.cfg.worker_id}-slot-{worker_slot}"
-            claimed["last_update_ts"] = now_val
+            if (
+                selected_bucket == "incomplete_tasks"
+                and not task.get("loop_mode")
+                and not self.maintenance.is_maintenance_task(
+                    str(task.get("task_type") or "slack_mention")
+                )
+                and str(task.get("task_type") or "") != "development"
+            ):
+                current_human_ts = str(task.get("last_human_reply_ts") or "0")
+                baseline_ts = str(task.get("auto_redispatch_baseline_ts") or "0")
+                count = int(task.get("auto_redispatch_count") or 0)
 
-            task_type = str(claimed.get("task_type") or "slack_mention")
+                if ts_gt(current_human_ts, baseline_ts):
+                    count = 0
+                    task["auto_redispatch_baseline_ts"] = current_human_ts
+                    task.pop("auto_redispatch_next_after", None)
+                else:
+                    count += 1
 
-            state.setdefault("active_tasks", {})[selected_key] = claimed
-            if selected_bucket != "active_tasks":
-                state.setdefault(selected_bucket, {}).pop(selected_key, None)
-            self.save_state(state)
+                task["auto_redispatch_count"] = count
 
-            # Write dispatch task file
-            dispatch = dict((state.get("active_tasks") or {}).get(selected_key) or {})
-            if dispatch:
-                mention_text_file = self.ensure_task_text_file(dispatch, bucket_name="active_tasks")
-                dispatch["mention_text"] = self.read_task_text(mention_text_file)
-            self.atomic_write_json(target_file, dispatch)
+                if count > self.cfg.max_auto_redispatches_per_human_reply:
+                    task["status"] = "waiting_human"
+                    task["waiting_reason"] = "auto_redispatch_budget_exhausted"
+                    task["last_human_reply_ts"] = current_human_ts
+                    task["last_update_ts"] = now_val
+                    self.save_state(state)
+                    self.log_line(
+                        f"auto_redispatch_budget_exhausted key={selected_key} "
+                        f"count={count} baseline={baseline_ts}"
+                    )
+                    _budget_parked = {
+                        "channel_id": str(task.get("channel_id") or ""),
+                        "thread_ts": str(task.get("thread_ts") or ""),
+                        "mention_text_file": str(task.get("mention_text_file") or ""),
+                        "count": str(count),
+                    }
+
+            if _budget_parked is None:
+                claimed = self.normalize_task(task, selected_key, bucket_name="active_tasks")
+                self.ensure_task_text_file(
+                    claimed,
+                    bucket_name="active_tasks",
+                    legacy_text=str(task.get("mention_text") or ""),
+                )
+                claimed["status"] = "in_progress"
+                claimed["claimed_by"] = f"{self.cfg.worker_id}-slot-{worker_slot}"
+                claimed["last_update_ts"] = now_val
+
+                task_type = str(claimed.get("task_type") or "slack_mention")
+
+                state.setdefault("active_tasks", {})[selected_key] = claimed
+                if selected_bucket != "active_tasks":
+                    state.setdefault(selected_bucket, {}).pop(selected_key, None)
+                self.save_state(state)
+
+                dispatch = dict((state.get("active_tasks") or {}).get(selected_key) or {})
+                if dispatch:
+                    mention_text_file = self.ensure_task_text_file(dispatch, bucket_name="active_tasks")
+                    dispatch["mention_text"] = self.read_task_text(mention_text_file)
+                self.atomic_write_json(target_file, dispatch)
+
+        if _budget_parked is not None:
+            try:
+                self._post_completion_fallback(
+                    _budget_parked["channel_id"],
+                    _budget_parked["thread_ts"],
+                    f"Automatic re-dispatch limit reached "
+                    f"({_budget_parked['count']} dispatches without new human input). "
+                    "Task parked — reply in this thread to resume.",
+                )
+            except Exception:
+                pass
+            _ch = _budget_parked["channel_id"]
+            _th = _budget_parked["thread_ts"]
+            _mf = _budget_parked["mention_text_file"]
+            if _ch and _th and _mf:
+                try:
+                    _msgs = self._fetch_thread_messages(_ch, _th)
+                    if _msgs:
+                        self._store_thread_snapshot(_mf, _msgs)
+                except Exception:
+                    pass
+            return None
 
         # Set instance variables for backward compat with serial path
         self.selected_bucket = selected_bucket
@@ -2817,6 +2949,14 @@ class Supervisor:
             if line == "{{LOOP_CONTEXT}}":
                 if loop_context_str:
                     out.extend(loop_context_str.splitlines())
+                continue
+            if line == "{{CONSULT_STATUS}}":
+                if not self._consult_healthy:
+                    out.append(
+                        "> **Athena/consult is unavailable this session** "
+                        "(supervisor health check failed). Do not plan around "
+                        "consulting Athena for this task."
+                    )
                 continue
             if line == "{{USER_PROFILE}}":
                 if user_profile_body:
@@ -3534,6 +3674,7 @@ class Supervisor:
         outcome_thread_ts = ""
         outcome_key_mismatch = False
         new_projects: List[str] = []
+        outcome_status_raw = ""
 
         # Per-task outcome file (primary), then legacy shared file (fallback)
         per_task_outcome = self._outcome_path_for_task(key)
@@ -3549,6 +3690,7 @@ class Supervisor:
                 outcome = json.loads(outcome_file.read_text(encoding="utf-8"))
                 outcome_mention = str(outcome.get("mention_ts") or "")
                 status = str(outcome.get("status") or "in_progress")
+                outcome_status_raw = status
                 summary = str(outcome.get("summary") or "")
                 requires_human_feedback = str(outcome.get("requires_human_feedback", False)).lower()
                 confidence = str(outcome.get("completion_confidence") or "")
@@ -3612,6 +3754,14 @@ class Supervisor:
                 status = "waiting_human"
                 if not error:
                     error = "moderate_gate_requires_high_confidence"
+
+        if captured_slot_id is not None:
+            _dispatch_file = self.cfg.dispatch_dir / f"worker-{captured_slot_id}.task.json"
+        else:
+            _dispatch_file = self.cfg.dispatch_task_file
+        _dispatch_human_ts = str(
+            self.read_json(_dispatch_file, {}).get("last_human_reply_ts") or "0"
+        )
 
         with self.state_lock():
             state = self.load_state()
@@ -3757,6 +3907,32 @@ class Supervisor:
                 for sf in self._SESSION_FIELDS:
                     merged.pop(sf, None)
 
+            if _dispatch_human_ts != "0":
+                merged["last_human_reply_ts"] = _dispatch_human_ts
+                if str(merged.get("auto_redispatch_baseline_ts") or "0") == "0":
+                    merged["auto_redispatch_baseline_ts"] = _dispatch_human_ts
+
+            if (
+                worker_exit == 0
+                and outcome_status_raw == "in_progress"
+                and destination == "incomplete_tasks"
+                and final_status == "in_progress"
+                and not task.get("loop_mode")
+                and not is_maintenance
+                and task_type != "development"
+            ):
+                count = int(merged.get("auto_redispatch_count") or 0)
+                delay = min(
+                    self.cfg.auto_redispatch_backoff_initial_sec
+                    * (self.cfg.auto_redispatch_backoff_multiplier ** count),
+                    float(self.cfg.auto_redispatch_backoff_max_sec),
+                )
+                merged["auto_redispatch_next_after"] = str(time.time() + delay)
+                self.log_line(
+                    f"auto_redispatch_cooldown_stamped key={key} "
+                    f"count={count} delay_sec={int(delay)}"
+                )
+
             self.ensure_task_text_file(merged, bucket_name=destination, legacy_text=str(task.get("mention_text") or ""))
 
             state.setdefault("active_tasks", {}).pop(key, None)
@@ -3862,12 +4038,20 @@ class Supervisor:
         # worker's run but before the draft is posted), the draft is stale —
         # discard it and re-dispatch so the worker can address the new message.
         _stale_draft = False
+        slack_id = self.resolve_slack_id()
         if (
             thread_msgs
             and not is_maintenance
             and final_status in ("done", "waiting_human")
+            and slack_id
         ):
-            slack_id = self.resolve_slack_id()
+            if captured_slot_id is not None:
+                dispatch_file = self.cfg.dispatch_dir / f"worker-{captured_slot_id}.task.json"
+            else:
+                dispatch_file = self.cfg.dispatch_task_file
+            dispatch_data = self.read_json(dispatch_file, {})
+            seen_human_ts = str(dispatch_data.get("last_human_reply_ts") or "0")
+
             _last_agent_ts = "0"
             _last_human_ts = "0"
             for m in thread_msgs:
@@ -3876,11 +4060,16 @@ class Supervisor:
                     _last_agent_ts = m.get("ts") or "0"
                 elif user:
                     _last_human_ts = m.get("ts") or "0"
-            if ts_gt(_last_human_ts, _last_agent_ts):
+
+            if seen_human_ts == "0":
+                seen_human_ts = _last_agent_ts
+
+            if ts_gt(_last_human_ts, seen_human_ts):
                 draft_path = self._resolve_draft_path(key)
                 if draft_path and Path(draft_path).exists():
                     self.log_line(
-                        f"stale_draft_detected key={key} last_human={_last_human_ts} last_agent={_last_agent_ts} — re-dispatching"
+                        f"stale_draft_detected key={key} last_human={_last_human_ts} "
+                        f"seen_human={seen_human_ts} last_agent={_last_agent_ts} — re-dispatching"
                     )
                     Path(draft_path).unlink(missing_ok=True)
                     with self.state_lock():
@@ -3890,6 +4079,7 @@ class Supervisor:
                             task_data["status"] = "in_progress"
                             task_data["claimed_by"] = None
                             task_data["last_update_ts"] = now_ts()
+                            task_data["last_human_reply_ts"] = _last_human_ts
                             state.setdefault("incomplete_tasks", {})[key] = task_data
                             self.save_state(state)
                     final_status = "in_progress"
@@ -4404,6 +4594,7 @@ class Supervisor:
             if any(
                 str((v or {}).get("status") or "in_progress") != "waiting_human"
                 and float((v or {}).get("loop_next_dispatch_after") or "0") <= now
+                and self._passes_auto_redispatch_cooldown(v, now)
                 for v in incomplete.values()
             ):
                 return True
@@ -4567,6 +4758,10 @@ class Supervisor:
                     dispatch = self.read_json(self.cfg.dispatch_task_file, {})
                     dispatch["dispatch_prompt_hash"] = system_prompt_hash()
                     self.atomic_write_json(self.cfg.dispatch_task_file, dispatch)
+                consult_healthy, consult_error = self._check_consult_health()
+                self._consult_healthy = consult_healthy
+                if not consult_healthy:
+                    self.log_line(f"consult_healthcheck_failed serial error={consult_error}")
                 self.render_runtime_prompt()
                 session_exit = self.run_worker_with_retries()
                 # AGENT-025: capture session ID from worker output
@@ -4734,6 +4929,17 @@ class Supervisor:
         # Inject per-task consult env vars into the copied .codex/config.toml
         slot.inject_task_env(task_key)
 
+        consult_healthy, consult_error = self._check_consult_health()
+        self._consult_healthy = consult_healthy
+        consult_binary = self._consult_binary_path
+        if consult_binary:
+            slot.rewrite_consult_binary_path(consult_binary)
+        if not consult_healthy:
+            self.log_line(
+                f"consult_healthcheck_failed slot={slot.slot_id} error={consult_error}"
+            )
+            slot.disable_consult_mcp()
+
         # AGENT-057: execute pending thread continuation before refresh
         self._check_and_execute_continuation(dispatch_task_file=slot.dispatch_task_file)
         # Refresh thread context (reads from slot's dispatch_task_file)
@@ -4872,6 +5078,16 @@ class Supervisor:
 
         self._store_thread_snapshot(mention_text_file, thread_msgs)
         dispatch["mention_text"] = self.read_task_text_for_prompt(mention_text_file)
+        slack_id = self.resolve_slack_id()
+        if slack_id:
+            last_human_ts = "0"
+            for m in thread_msgs:
+                user = m.get("user") or ""
+                if user and user != slack_id:
+                    msg_ts = m.get("ts") or "0"
+                    if ts_gt(msg_ts, last_human_ts):
+                        last_human_ts = msg_ts
+            dispatch["last_human_reply_ts"] = last_human_ts
         self.atomic_write_json(slot.dispatch_task_file, dispatch)
 
     def _render_slot_resume_prompt(
@@ -4987,6 +5203,14 @@ class Supervisor:
                 if loop_context_str:
                     out.extend(loop_context_str.splitlines())
                 continue
+            if line == "{{CONSULT_STATUS}}":
+                if not self._consult_healthy:
+                    out.append(
+                        "> **Athena/consult is unavailable this session** "
+                        "(supervisor health check failed). Do not plan around "
+                        "consulting Athena for this task."
+                    )
+                continue
             if line == "{{USER_PROFILE}}":
                 if user_profile_body:
                     out.append("About your collaborator:")
@@ -5090,16 +5314,22 @@ class Supervisor:
                 f"watchdog_reconcile slot={slot.slot_id} task={task_key} "
                 f"reason={slot.killed_reason} exit={exit_code}"
             )
-            requeued = self._watchdog_requeue_or_park(
+            park_info = self._watchdog_requeue_or_park(
                 task_key, slot.killed_reason or "unknown"
             )
-            if requeued:
+            if park_info is None:
                 self.log_line(
                     f"watchdog_requeue slot={slot.slot_id} task={task_key}"
                 )
             else:
+                ch, ts = park_info
                 self.log_line(
                     f"watchdog_retries_exhausted slot={slot.slot_id} task={task_key}"
+                )
+                self._post_completion_fallback(
+                    ch, ts,
+                    "Task stalled internally and was parked after repeated "
+                    "no-output failures. Re-mention to retry.",
                 )
             slot.reset()
             return
@@ -5620,15 +5850,17 @@ class Supervisor:
                 self.save_state(state)
                 self.log_line(f"task_parked_waiting_human key={task_key} error={error}")
 
-    def _watchdog_requeue_or_park(self, task_key: str, reason: str) -> bool:
+    def _watchdog_requeue_or_park(
+        self, task_key: str, reason: str
+    ) -> Optional[Tuple[str, str]]:
         """Atomically check retries and either requeue or park a watchdog-killed task.
 
         Combines retry checking, counter increment, and task-bucket move
         under a single lock acquisition to prevent TOCTOU races where the
         task could be moved between separate lock/unlock cycles.
 
-        Returns True if task was requeued (retries remain), False if parked
-        as waiting_human (retries exhausted or task not found).
+        Returns None if task was requeued (retries remain) or not found.
+        Returns (channel_id, thread_ts) if parked as waiting_human.
         """
         with self.state_lock():
             state = self.load_state()
@@ -5637,7 +5869,7 @@ class Supervisor:
                 self.log_line(
                     f"watchdog_task_not_found key={task_key}"
                 )
-                return False
+                return None
             retries = int(task.get("watchdog_retries") or 0)
             if retries < self.cfg.max_watchdog_retries:
                 # Retries remain — increment counter and move to queued
@@ -5649,10 +5881,12 @@ class Supervisor:
                 task["last_update_ts"] = now_ts()
                 state.setdefault("queued_tasks", {})[task_key] = task
                 self.save_state(state)
-                return True
+                return None
             else:
                 # Retries exhausted — park as waiting_human
                 error = f"watchdog_retries_exhausted: {reason}"
+                channel_id = str(task.get("channel_id") or "")
+                thread_ts = str(task.get("thread_ts") or "")
                 (state.get("active_tasks") or {}).pop(task_key, None)
                 task["status"] = "waiting_human"
                 task["claimed_by"] = None
@@ -5663,7 +5897,7 @@ class Supervisor:
                 self.log_line(
                     f"task_parked_waiting_human key={task_key} error={error}"
                 )
-                return False
+                return (channel_id, thread_ts)
 
     def _dispatch_maintenance_serial(self) -> None:
         """Dispatch a serial task (maintenance or development) in the main worktree.
@@ -5748,6 +5982,7 @@ class Supervisor:
                 for k, v in (state.get("incomplete_tasks") or {}).items()
                 if str((v or {}).get("status") or "in_progress") != "waiting_human"
                 and float((v or {}).get("loop_next_dispatch_after") or "0") <= now_epoch
+                and self._passes_auto_redispatch_cooldown(v, now_epoch)
             }
             if incomplete:
                 sel = self._by_oldest(incomplete)
