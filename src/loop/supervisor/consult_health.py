@@ -45,29 +45,49 @@ def check_consult_health(
             env=env,
             text=True,
         )
-        stdout, stderr = proc.communicate(
-            input=_MCP_INIT_REQUEST + "\n",
-            timeout=timeout_sec,
-        )
-        if proc.returncode != 0:
-            preview = (stderr or stdout or "")[:300].strip()
-            return False, f"exit {proc.returncode}: {preview}"
+        # Send the initialize request, then close stdin so the server
+        # knows no more input is coming on this stream.
+        assert proc.stdin is not None
+        proc.stdin.write(_MCP_INIT_REQUEST + "\n")
+        proc.stdin.flush()
 
-        for line in (stdout or "").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "result" in obj:
-                return True, ""
+        # Read stdout line-by-line until we get a valid MCP response.
+        # MCP servers are long-lived — they won't exit after initialize,
+        # so proc.communicate() would hang until timeout.
+        import select
 
-        preview = (stdout or "")[:300].strip()
-        return False, f"no valid MCP response: {preview}"
-    except subprocess.TimeoutExpired:
-        return False, f"timeout after {timeout_sec}s"
+        assert proc.stdout is not None
+        deadline = time.monotonic() + timeout_sec
+        buf = ""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, f"timeout after {timeout_sec}s"
+            ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 1.0))
+            if not ready:
+                continue
+            chunk = proc.stdout.read(4096)
+            if not chunk:
+                # Process closed stdout — check if it crashed
+                rc = proc.poll()
+                stderr_out = ""
+                if proc.stderr:
+                    stderr_out = proc.stderr.read() or ""
+                preview = (stderr_out or buf or "")[:300].strip()
+                if rc is not None and rc != 0:
+                    return False, f"exit {rc}: {preview}"
+                return False, f"no valid MCP response: {preview}"
+            buf += chunk
+            for line in buf.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if "result" in obj:
+                    return True, ""
     except FileNotFoundError:
         return False, f"binary not found: {binary_path}"
     except Exception as exc:

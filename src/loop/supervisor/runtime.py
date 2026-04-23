@@ -2296,6 +2296,8 @@ class Supervisor:
                 if not isinstance(task, dict):
                     continue
                 status_val = str(task.get("status") or "")
+                # Also check cooling-down in_progress tasks — a human reply
+                # during cooldown should reset the auto-redispatch budget.
                 cooling_down = (
                     status_val != "waiting_human"
                     and float(task.get("auto_redispatch_next_after") or "0") > now_epoch
